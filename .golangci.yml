@@ -1,0 +1,33 @@
+run:
+  timeout: 5m
+  go: "1.21"
+
+linters:
+  enable:
+    - errcheck       # unchecked errors
+    - gosimple       # simplification suggestions
+    - govet          # go vet checks
+    - ineffassign    # unused assignments
+    - staticcheck    # static analysis
+    - unused         # unused code
+    - gofmt          # formatting
+    - goimports      # import ordering
+    - misspell       # spelling
+    - revive         # opinionated Go style
+    - godoc          # godoc comment checks
+    - contextcheck   # context propagation
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+
+issues:
+  exclude-rules:
+    # Test files get a bit more leniency
+    - path: "_test.go"
+      linters:
+        - errcheck
+        - godoc
