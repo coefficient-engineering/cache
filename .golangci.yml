@@ -1,33 +1,41 @@
+version: "2"
 run:
-  timeout: 5m
   go: "1.21"
-
 linters:
   enable:
-    - errcheck       # unchecked errors
-    - gosimple       # simplification suggestions
-    - govet          # go vet checks
-    - ineffassign    # unused assignments
-    - staticcheck    # static analysis
-    - unused         # unused code
-    - gofmt          # formatting
-    - goimports      # import ordering
-    - misspell       # spelling
-    - revive         # opinionated Go style
-    - godoc          # godoc comment checks
-    - contextcheck   # context propagation
-
-linters-settings:
-  revive:
+    - contextcheck
+#    - godoc
+    - misspell
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        arguments:
-          - "checkPrivateReceivers"
-
-issues:
-  exclude-rules:
-    # Test files get a bit more leniency
-    - path: "_test.go"
-      linters:
-        - errcheck
-        - godoc
+      - linters:
+          - errcheck
+          - godoc
+        path: _test.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
