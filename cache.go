@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sync"
 	"time"
 
@@ -29,7 +30,7 @@ type Cache interface {
 	// Delete removes the entry from all cache layers and notifies the backplane.
 	Delete(ctx context.Context, key string, opts ...EntryOption) error
 
-	// DeleteByTag removes all entreis associated with tag from all layers.
+	// DeleteByTag removes all entries associated with tag from all layers.
 	DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error
 
 	// Expire marks the entry as logically expired without removing it.
@@ -56,7 +57,7 @@ type Cache interface {
 }
 
 // FactoryFunc is the function called on a cache miss to produce a fresh value.
-// It recieves the request context and should respect cancellation.
+// It receives the request context and should respect cancellation.
 type FactoryFunc func(ctx context.Context) (any, error)
 
 func GetOrSet[T any](
@@ -158,7 +159,7 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 
 	// L2 write
 	if c.l2 != nil && !opts.SkipL2Write {
-		c.writeL2(ctx, pk, value, opts)
+		c.writeL2(ctx, key, value, opts)
 	}
 
 	// backplane notification
@@ -174,10 +175,12 @@ func (c *cache) computePhysicalExpiry(now time.Time, opts EntryOptions) (physica
 	return now.Add(opts.Duration)
 }
 
-// maybeAutoClone prevents callers from recieving modifying cached pointers directly
+// maybeAutoClone prevents callers from modifying cached pointers directly
 // by serializing and deserializing the return value to clone it.
+// Uses reflection to allocate a fresh value of the correct concrete type,
+// ensuring pointer types get a true deep copy rather than a shallow pointer copy.
 func (c *cache) maybeAutoClone(value any, opts EntryOptions) (any, error) {
-	if !opts.EnableAutoClone || c.serializer == nil {
+	if !opts.EnableAutoClone || c.serializer == nil || value == nil {
 		return value, nil
 	}
 
@@ -185,11 +188,22 @@ func (c *cache) maybeAutoClone(value any, opts EntryOptions) (any, error) {
 	if err != nil {
 		return value, err
 	}
-	clone := value
-	if err := c.serializer.Unmarshal(data, &clone); err != nil {
+
+	// Allocate a new value of the same concrete type via reflection.
+	t := reflect.TypeOf(value)
+	var target reflect.Value
+	if t.Kind() == reflect.Ptr {
+		target = reflect.New(t.Elem()) // *T → new(T), returns *T
+	} else {
+		target = reflect.New(t) // T → new(T), returns *T
+	}
+	if err := c.serializer.Unmarshal(data, target.Interface()); err != nil {
 		return value, err
 	}
-	return clone, nil
+	if t.Kind() == reflect.Ptr {
+		return target.Interface(), nil
+	}
+	return target.Elem().Interface(), nil
 }
 
 func (c *cache) GetOrSet(
@@ -223,7 +237,7 @@ func (c *cache) GetOrSet(
 	doFn := func() (any, error) {
 		now := c.clock.Now()
 
-		// recheck L1 incase another goroutine populated it while we waited
+		// recheck L1 in case another goroutine populated it while we waited
 		if !eo.SkipL1Read {
 			if raw, ok := c.l1.Load(pk); ok {
 				entry := raw.(*cacheEntry)
@@ -235,9 +249,9 @@ func (c *cache) GetOrSet(
 
 		// L2 read
 		if c.l2 != nil && !eo.SkipL2Read && !c.l2CB.IsOpen() {
-			l2Value, l2Entry, err := c.readL2(ctx, pk, eo)
+			l2Value, l2Entry, err := c.readL2(ctx, key, eo)
 			if err != nil {
-				c.events.emit(EventL2Error{Key: key, Err: err})
+				// readL2 emits EventL2Error internally
 			} else if l2Entry != nil {
 				if !l2Entry.IsLogicallyExpired(now) {
 					// fresh l2 hit, promote to l1
@@ -312,9 +326,9 @@ func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, 
 
 	// L2 read
 	if c.l2 != nil && !eo.SkipL2Read && !c.l2CB.IsOpen() {
-		l2Value, l2Entry, err := c.readL2(ctx, pk, eo)
+		l2Value, l2Entry, err := c.readL2(ctx, key, eo)
 		if err != nil {
-			c.events.emit(EventL2Error{Key: key, Err: err})
+			// readL2 emits EventL2Error internally
 		} else if l2Entry != nil {
 			if !l2Entry.IsLogicallyExpired(now) || eo.AllowStaleOnReadOnly {
 				if !l2Entry.IsLogicallyExpired(now) {
@@ -381,7 +395,7 @@ func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) err
 			createdAt:      old.createdAt,
 			tags:           old.tags,
 		}
-		c.l1.Store(pk, expired)
+		c.l1.CompareAndSwap(pk, raw, expired)
 	}
 
 	// Notify backplane
@@ -481,10 +495,11 @@ func (c *cache) Events() *EventEmitter {
 }
 
 // writeL2 writes a value to the L2 distributed cache.
-func (c *cache) writeL2(ctx context.Context, pk string, value any, opts EntryOptions) {
+func (c *cache) writeL2(ctx context.Context, key string, value any, opts EntryOptions) {
 	if c.l2CB.IsOpen() {
 		return // circuit breaker open; skip l2
 	}
+	pk := c.prefixedKey(key)
 	doWrite := func() {
 		data, err := c.marshalL2Entry(value, opts)
 		if err != nil {
@@ -503,10 +518,10 @@ func (c *cache) writeL2(ctx context.Context, pk string, value any, opts EntryOpt
 			writeCtx, cancel = context.WithTimeout(ctx, opts.DistributedCacheHardTimeout)
 			defer cancel()
 		}
-		err = c.l2.Set(writeCtx, pk, data, ttl)
+		err = c.l2.Set(writeCtx, pk, data, ttl, opts.Tags)
 		c.l2CB.Record(err)
 		if err != nil {
-			c.events.emit(EventL2Error{Key: pk, Err: err})
+			c.events.emit(EventL2Error{Key: key, Err: err})
 			c.logger.Warn("cache: L2 write failed",
 				slog.String("key", pk),
 				slog.String("error", err.Error()),
@@ -521,10 +536,11 @@ func (c *cache) writeL2(ctx context.Context, pk string, value any, opts EntryOpt
 }
 
 // readL2 reads from the L2 distributed cache and returns the value and entry.
-func (c *cache) readL2(ctx context.Context, pk string, opts EntryOptions) (any, *cacheEntry, error) {
+func (c *cache) readL2(ctx context.Context, key string, opts EntryOptions) (any, *cacheEntry, error) {
 	if c.l2CB.IsOpen() {
 		return nil, nil, nil // circuit breaker open; treat as miss
 	}
+	pk := c.prefixedKey(key)
 	// apply l2 timeout
 	readCtx := ctx
 	if opts.DistributedCacheHardTimeout > 0 {
@@ -535,7 +551,7 @@ func (c *cache) readL2(ctx context.Context, pk string, opts EntryOptions) (any, 
 	data, err := c.l2.Get(readCtx, pk)
 	c.l2CB.Record(err)
 	if err != nil {
-		c.events.emit(EventL2Error{Key: pk, Err: err})
+		c.events.emit(EventL2Error{Key: key, Err: err})
 		return nil, nil, err
 	}
 	if data == nil {
@@ -642,7 +658,7 @@ func (c *cache) handleBackplaneMessage(msg backplane.Message) {
 				createdAt:      old.createdAt,
 				tags:           old.tags,
 			}
-			c.l1.Store(pk, expired)
+			c.l1.CompareAndSwap(pk, raw, expired)
 		}
 
 	case backplane.MessageTypeClear:
@@ -688,7 +704,11 @@ func (c *cache) unmarshalL2Entry(data []byte) (any, *cacheEntry, error) {
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, nil, fmt.Errorf("cache: deserialize envelope: %w", err)
 	}
-	// deserialize inner val
+	// NOTE: Deserializing into `any` loses concrete type information with
+	// JSON-based serializers (e.g., *MyStruct becomes map[string]interface{}).
+	// L1-only paths store the original Go value directly and are unaffected.
+	// For L2, use a type-aware serializer (e.g., gob) if concrete type
+	// round-tripping is required.
 	var value any
 	if err := c.serializer.Unmarshal(env.V, &value); err != nil {
 		return nil, nil, fmt.Errorf("cache: deserialize value: %w", err)

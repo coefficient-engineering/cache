@@ -11,7 +11,7 @@ type stampedeGroup struct {
 }
 
 // Do executes fn exactly once per key across concurrent callers.
-// All callers for the same key blocks until the single execution completes,
+// All callers for the same key block until the single execution completes,
 // then receive the same result.
 func (g *stampedeGroup) Do(key string, fn func() (any, error)) (any, error, bool) {
 	return g.sf.Do(key, fn)
@@ -31,20 +31,21 @@ func (g *stampedeGroup) DoWithTimeout(
 	}
 
 	type result struct {
-		v   any
-		err error
+		v      any
+		err    error
+		shared bool
 	}
 
 	ch := make(chan result, 1)
 
 	go func() {
-		v, err, _ := g.sf.Do(key, fn)
-		ch <- result{v, err}
+		v, err, shared := g.sf.Do(key, fn)
+		ch <- result{v, err, shared}
 	}()
 
 	select {
 	case r := <-ch:
-		return r.v, r.err, false
+		return r.v, r.err, r.shared
 	case <-time.After(timeout):
 		return nil, ErrLockTimeout, false
 	}

@@ -19,8 +19,11 @@ type Adapter interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 
 	// Set stores raw bytes under key with the given TTL.
-	// A TTL of 0 means the entry does not expire.
-	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+	// A TTL of 0 means the entry does not expire (store indefinitely).
+	// Tags associates string labels with this key for bulk invalidation via
+	// DeleteByTag. The adapter is responsible for maintaining tag-to-key
+	// associations. A nil or empty tags slice means no tag associations.
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration, tags []string) error
 
 	// Delete removes key. Must NOT return an error if the key does not exist.
 	Delete(ctx context.Context, key string) error

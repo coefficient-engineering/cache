@@ -46,16 +46,12 @@ func (c *cache) runFactoryWithTimeouts(
 	for {
 		select {
 		case r := <-resultCh:
-			// Factory completed. If we already returned a stale value to the
-			// original caller (softFired), optionally cache the new result.
+			// Factory completed.
 			if r.err == nil && softFired && opts.AllowTimedOutFactoryBackgroundCompletion {
 				c.storeSafely(context.Background(), key, r.value, opts)
 			}
-			if !softFired {
-				factoryCancel()
-				return r.value, r.err
-			}
-			return r.value, r.err // caller already got stale; this result is background
+			factoryCancel()
+			return r.value, r.err
 
 		case <-softTimer:
 			softTimer = nil
@@ -64,13 +60,17 @@ func (c *cache) runFactoryWithTimeouts(
 				c.events.emit(EventSoftTimeoutActivated{Key: key})
 				if opts.AllowTimedOutFactoryBackgroundCompletion {
 					// Keep goroutine alive; it will call storeSafely on completion.
+					safetyTimeout := 60 * time.Second
+					if opts.FactoryHardTimeout > 0 {
+						safetyTimeout = opts.FactoryHardTimeout
+					}
 					go func() {
 						select {
 						case r := <-resultCh:
 							if r.err == nil {
 								c.storeSafely(context.Background(), key, r.value, opts)
 							}
-						case <-time.After(60 * time.Second): // safety drain
+						case <-time.After(safetyTimeout):
 							factoryCancel()
 						}
 					}()

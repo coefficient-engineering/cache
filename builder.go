@@ -134,6 +134,8 @@ func New(opts ...Option) (Cache, error) {
 
 func generateNodeID() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to generate node ID: %v", err))
+	}
 	return fmt.Sprintf("%x", b)
 }

@@ -51,14 +51,14 @@ func (cb *circuitBreaker) Record(err error) {
 
 	if err == nil {
 		// success: close circuit & reset counter
-		if cb.state != cbClosed {
-			wasOpen := cb.state == cbOpen || cb.state == cbHalfOpen
+		wasOpen := cb.state == cbOpen || cb.state == cbHalfOpen
+		if wasOpen {
 			cb.state = cbClosed
-			cb.failures = 0
-			if wasOpen && cb.onRecovery != nil {
+			if cb.onRecovery != nil {
 				go cb.onRecovery()
 			}
 		}
+		cb.failures = 0 // always reset on success
 		return
 	}
 

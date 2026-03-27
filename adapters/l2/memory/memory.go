@@ -37,35 +37,36 @@ func (a *Adapter) Get(_ context.Context, key string) ([]byte, error) {
 	return e.data, nil
 }
 
-func (a *Adapter) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
+func (a *Adapter) Set(_ context.Context, key string, value []byte, ttl time.Duration, tags []string) error {
+	// Clean old tag associations if overwriting an existing entry.
+	if raw, ok := a.store.Load(key); ok {
+		old := raw.(*entry)
+		for _, tag := range old.tags {
+			if raw, ok := a.tags.Load(tag); ok {
+				tagKeys := raw.(*sync.Map)
+				tagKeys.Delete(key)
+			}
+		}
+	}
+
+	// Defensive copy of data and tags.
+	tagsCopy := make([]string, len(tags))
+	copy(tagsCopy, tags)
+
 	e := &entry{
 		data: make([]byte, len(value)),
-	}
-	copy(e.data, value) // defensive copy
-
-	if ttl > 0 {
-		e.expiresAt = time.Now().Add(ttl)
-	}
-
-	a.store.Store(key, e)
-	return nil
-}
-
-// SetWithTags stores value with tags. This is a memory-adapter-specific
-// extension for testing tag support.
-func (a *Adapter) SetWithTags(_ context.Context, key string, value []byte, ttl time.Duration, tags []string) error {
-	e := &entry{
-		data: make([]byte, len(value)),
-		tags: tags,
+		tags: tagsCopy,
 	}
 	copy(e.data, value)
+
 	if ttl > 0 {
 		e.expiresAt = time.Now().Add(ttl)
 	}
+
 	a.store.Store(key, e)
 
-	// Track tag → key associations
-	for _, tag := range tags {
+	// Track tag → key associations.
+	for _, tag := range tagsCopy {
 		raw, _ := a.tags.LoadOrStore(tag, &sync.Map{})
 		tagKeys := raw.(*sync.Map)
 		tagKeys.Store(key, struct{}{})
@@ -75,7 +76,15 @@ func (a *Adapter) SetWithTags(_ context.Context, key string, value []byte, ttl t
 }
 
 func (a *Adapter) Delete(_ context.Context, key string) error {
-	a.store.Delete(key)
+	if raw, loaded := a.store.LoadAndDelete(key); loaded {
+		e := raw.(*entry)
+		for _, tag := range e.tags {
+			if raw, ok := a.tags.Load(tag); ok {
+				tagKeys := raw.(*sync.Map)
+				tagKeys.Delete(key)
+			}
+		}
+	}
 	return nil // NOT an error if key doesn't exist
 }
 

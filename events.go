@@ -98,8 +98,11 @@ func (e *EventEmitter) On(handler EventHandler) (unsubscribe func()) {
 
 func (e *EventEmitter) emit(event Event) {
 	e.mu.RLock()
-	defer e.mu.RUnlock()
-	for _, slot := range e.handlers {
+	handlers := make([]*eventHandlerSlot, len(e.handlers))
+	copy(handlers, e.handlers)
+	e.mu.RUnlock()
+
+	for _, slot := range handlers {
 		if slot.fn != nil {
 			slot.fn(event)
 		}

@@ -46,11 +46,15 @@ func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err err
 	ch := make(chan backplane.Message, 64)
 
 	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return func() {}, nil
+	}
 	b.subscribers = append(b.subscribers, ch)
 	b.mu.Unlock()
 
 	done := make(chan struct{})
-
+	var once sync.Once
 	// Handler runs on a managed goroutine, never on the caller's goroutine
 	go func() {
 		for {
@@ -71,7 +75,17 @@ func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err err
 	}()
 
 	cancel = func() {
-		close(done)
+		once.Do(func() {
+			close(done)
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			for i, sub := range b.subscribers {
+				if sub == ch {
+					b.subscribers = append(b.subscribers[:i], b.subscribers[i+1:]...)
+					break
+				}
+			}
+		})
 	}
 	return cancel, nil
 }

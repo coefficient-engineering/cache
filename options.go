@@ -21,7 +21,7 @@ type Options struct {
 	// Example: "myapp:products:"
 	KeyPrefix string
 
-	// DefaultEntryOPtions is the baseline EntryOptions for every cache operaton.
+	// DefaultEntryOptions is the baseline EntryOptions for every cache operation.
 	// Per-call EntryOption funcs are applied on top of a copy of this value.
 	DefaultEntryOptions EntryOptions
 
@@ -34,7 +34,7 @@ type Options struct {
 	Serializer serializer.Serializer
 
 	// Backplane enables inter-node invalidation.
-	// If nil, no cross-node notifications are sent or recieved.
+	// If nil, no cross-node notifications are sent or received.
 	Backplane backplane.Backplane
 
 	// Logger is the structured logger for internal diagnostics.
@@ -278,7 +278,11 @@ func WithJitter(max time.Duration) EntryOption {
 }
 
 func WithTags(tags ...string) EntryOption {
-	return func(o *EntryOptions) { o.Tags = append(o.Tags, tags...) }
+	return func(o *EntryOptions) {
+		newTags := make([]string, len(o.Tags), len(o.Tags)+len(tags))
+		copy(newTags, o.Tags)
+		o.Tags = append(newTags, tags...)
+	}
 }
 
 func WithPriority(p EvictionPriority) EntryOption {
@@ -320,7 +324,12 @@ func WithSize(n int64) EntryOption {
 // applyOptions returns a new EntryOptions with opts applied on top of defaults.
 // This is called internally on every cache operation.
 func applyOptions(defaults EntryOptions, opts []EntryOption) EntryOptions {
-	result := defaults // value copy — never mutates the stored defaults
+	result := defaults // value copy, never mutates the stored defaults
+	// Deep copy Tags slice to avoid shared backing array
+	if len(defaults.Tags) > 0 {
+		result.Tags = make([]string, len(defaults.Tags))
+		copy(result.Tags, defaults.Tags)
+	}
 	for _, opt := range opts {
 		opt(&result)
 	}

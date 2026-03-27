@@ -4,7 +4,7 @@ run:
 linters:
   enable:
     - contextcheck
-#    - godoc
+    - godoclint
     - misspell
     - revive
   settings:
@@ -23,8 +23,8 @@ linters:
     rules:
       - linters:
           - errcheck
-          - godoc
-        path: _test.go
+          - godoclint
+        path: _test\.go$
     paths:
       - third_party$
       - builtin$
