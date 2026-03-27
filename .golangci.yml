@@ -7,6 +7,9 @@ linters:
     - godoclint
     - misspell
     - revive
+    - godot
+    - godox
+    - modernize
   settings:
     revive:
       rules:
@@ -15,6 +18,13 @@ linters:
             - checkPrivateReceivers
     godoclint:
       default: all
+    godot:
+      period: true
+      capital: false
+      check-all: false
+      exclude:
+        - "^todo"
+        - "^fixme"
   exclusions:
     generated: lax
     presets:
