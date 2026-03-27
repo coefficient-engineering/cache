@@ -194,10 +194,7 @@ func (a *Adapter) DeleteByTag(ctx context.Context, tag string) error {
 
 func (a *Adapter) Clear(ctx context.Context) error {
 	if a.keyPrefix == "" {
-		// Without a prefix we cannot safely scope the clear.
-		// Use FLUSHDB as a last resort, caller must be aware this
-		// clears the entire database.
-		return a.client.FlushDB(ctx).Err()
+		return errors.New("redis l2: Clear requires a key prefix to avoid wiping shared namespaces")
 	}
 
 	// SCAN-based deletion scoped to our key prefix.
