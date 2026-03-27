@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/coefficient-engineering/cache/backplane"
+	"github.com/coefficient-engineering/cache/l1"
 	"github.com/coefficient-engineering/cache/l2"
 	"github.com/coefficient-engineering/cache/serializer"
 )
@@ -24,6 +25,10 @@ type Options struct {
 	// DefaultEntryOptions is the baseline EntryOptions for every cache operation.
 	// Per-call EntryOption funcs are applied on top of a copy of this value.
 	DefaultEntryOptions EntryOptions
+
+	// L1 is the in-process memory cache adapter.
+	// If nil, a default sync.Map-backed adapter is used.
+	L1 l1.Adapter
 
 	// L2 is the distributed cache adapter.
 	// If nil, cache operates as a pure in-process memory cache.

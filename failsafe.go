@@ -39,7 +39,7 @@ func (c *cache) executeWithFailSafe(
 		tags:           staleEntry.tags,
 		createdAt:      staleEntry.createdAt,
 	}
-	c.l1.Store(c.prefixedKey(key), throttled)
+	c.l1.Set(c.prefixedKey(key), throttled, opts.Size)
 
 	return staleEntry.value, nil
 }

@@ -25,10 +25,7 @@ func TestL2_WriteAndReadThrough(t *testing.T) {
 	c.Set(ctx, "key", "value")
 
 	// Clear L1 to force L2 read
-	c.(*cache).l1.Range(func(key, _ any) bool {
-		c.(*cache).l1.Delete(key)
-		return true
-	})
+	c.(*cache).l1.Clear()
 
 	// Should read from L2 and promote to L1
 	val, ok, err := c.Get(ctx, "key")
@@ -63,10 +60,7 @@ func TestL2_FailSafe_StaleFromL2(t *testing.T) {
 	}
 
 	// Clear L1, advance time past logical expiry
-	c.(*cache).l1.Range(func(key, _ any) bool {
-		c.(*cache).l1.Delete(key)
-		return true
-	})
+	c.(*cache).l1.Clear()
 	clk.Advance(2 * time.Minute)
 
 	// Factory fails, should get stale from L2 via fail-safe

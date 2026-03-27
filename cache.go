@@ -13,6 +13,7 @@ import (
 
 	"github.com/coefficient-engineering/cache/backplane"
 	"github.com/coefficient-engineering/cache/internal/clock"
+	"github.com/coefficient-engineering/cache/l1"
 	"github.com/coefficient-engineering/cache/l2"
 	"github.com/coefficient-engineering/cache/serializer"
 )
@@ -106,7 +107,7 @@ type cache struct {
 	opts   Options // full cache-wide config snapshot
 	logger *slog.Logger
 
-	l1 sync.Map
+	l1 l1.Adapter
 
 	l2         l2.Adapter // nil if no L2 configured
 	serializer serializer.Serializer
@@ -153,7 +154,7 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 
 	// L1 write
 	if !opts.SkipL1Write {
-		c.l1.Store(pk, entry)
+		c.l1.Set(pk, entry, opts.Size)
 		if len(opts.Tags) > 0 {
 			c.tagIdx.add(pk, opts.Tags)
 		}
@@ -221,7 +222,7 @@ func (c *cache) GetOrSet(
 	// L1 read
 	var staleEntry *cacheEntry
 	if !eo.SkipL1Read {
-		if raw, ok := c.l1.Load(pk); ok {
+		if raw, ok := c.l1.Get(pk); ok {
 			entry := raw.(*cacheEntry)
 			if !entry.IsLogicallyExpired(now) {
 				// fresh hit
@@ -241,7 +242,7 @@ func (c *cache) GetOrSet(
 
 		// recheck L1 in case another goroutine populated it while we waited
 		if !eo.SkipL1Read {
-			if raw, ok := c.l1.Load(pk); ok {
+			if raw, ok := c.l1.Get(pk); ok {
 				entry := raw.(*cacheEntry)
 				if !entry.IsLogicallyExpired(now) {
 					return entry.value, nil
@@ -259,7 +260,7 @@ func (c *cache) GetOrSet(
 					// fresh l2 hit, promote to l1
 					c.events.emit(EventL2Hit{Key: key})
 					if !eo.SkipL1Write {
-						c.l1.Store(pk, l2Entry)
+						c.l1.Set(pk, l2Entry, eo.Size)
 						if len(l2Entry.tags) > 0 {
 							c.tagIdx.add(pk, l2Entry.tags)
 						}
@@ -310,7 +311,7 @@ func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, 
 
 	// L1 read
 	if !eo.SkipL1Read {
-		if raw, ok := c.l1.Load(pk); ok {
+		if raw, ok := c.l1.Get(pk); ok {
 			entry := raw.(*cacheEntry)
 			if !entry.IsLogicallyExpired(now) {
 				c.events.emit(EventCacheHit{Key: key})
@@ -337,7 +338,7 @@ func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, 
 					c.events.emit(EventL2Hit{Key: key})
 				}
 				if !eo.SkipL1Write {
-					c.l1.Store(pk, l2Entry)
+					c.l1.Set(pk, l2Entry, eo.Size)
 					if len(l2Entry.tags) > 0 {
 						c.tagIdx.add(pk, l2Entry.tags)
 					}
@@ -388,7 +389,7 @@ func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) err
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	pk := c.prefixedKey(key)
 
-	if raw, ok := c.l1.Load(pk); ok {
+	if raw, ok := c.l1.Get(pk); ok {
 		old := raw.(*cacheEntry)
 		expired := &cacheEntry{
 			value:          old.value,
@@ -445,10 +446,7 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 
 func (c *cache) Clear(ctx context.Context, clearL2 bool) error {
 	// Clear L1: iterate and delete all entries
-	c.l1.Range(func(key, value any) bool {
-		c.l1.Delete(key)
-		return true
-	})
+	c.l1.Clear()
 
 	// Clear tag index
 	c.tagIdx.clear()
@@ -480,6 +478,7 @@ func (c *cache) Close() error {
 		if c.bp != nil {
 			_ = c.bp.Close()
 		}
+		c.l1.Close()
 	})
 	return nil
 }
@@ -651,7 +650,7 @@ func (c *cache) handleBackplaneMessage(msg backplane.Message) {
 
 	case backplane.MessageTypeExpire:
 		pk := c.prefixedKey(msg.Key)
-		if raw, ok := c.l1.Load(pk); ok {
+		if raw, ok := c.l1.Get(pk); ok {
 			old := raw.(*cacheEntry)
 			expired := &cacheEntry{
 				value:          old.value,
@@ -664,10 +663,7 @@ func (c *cache) handleBackplaneMessage(msg backplane.Message) {
 		}
 
 	case backplane.MessageTypeClear:
-		c.l1.Range(func(key, value any) bool {
-			c.l1.Delete(key)
-			return true
-		})
+		c.l1.Clear()
 		c.tagIdx.clear()
 	}
 }
@@ -677,10 +673,7 @@ func (c *cache) attemptAutoRecovery() {
 		return
 	}
 	c.logger.Info("cache: backplane auto-recovery, clearing L1...")
-	c.l1.Range(func(key, value any) bool {
-		c.l1.Delete(key)
-		return true
-	})
+	c.l1.Clear()
 	c.tagIdx.clear()
 }
 

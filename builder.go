@@ -7,16 +7,23 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/coefficient-engineering/cache/adapters/l1/syncmap"
 	"github.com/coefficient-engineering/cache/backplane"
 	"github.com/coefficient-engineering/cache/internal/clock"
+	"github.com/coefficient-engineering/cache/l1"
 	"github.com/coefficient-engineering/cache/l2"
 	"github.com/coefficient-engineering/cache/serializer"
 )
 
 func newCache(opts *Options) (*cache, error) {
+	l1Adapter := opts.L1
+	if l1Adapter == nil {
+		l1Adapter = syncmap.New() // default to sync.Map
+	}
 	c := &cache{
 		opts:       *opts,
 		logger:     opts.Logger,
+		l1:         l1Adapter,
 		l2:         opts.L2,
 		serializer: opts.Serializer,
 		bp:         opts.Backplane,
@@ -54,6 +61,10 @@ func WithCacheName(name string) Option {
 
 func WithKeyPrefix(prefix string) Option {
 	return func(o *Options) { o.KeyPrefix = prefix }
+}
+
+func WithL1(adapter l1.Adapter) Option {
+	return func(o *Options) { o.L1 = adapter }
 }
 
 func WithL2(adapter l2.Adapter) Option {
@@ -114,9 +125,9 @@ func New(opts ...Option) (Cache, error) {
 		opt(o)
 	}
 
-	// Validation
+	// Validate
 	if o.L2 != nil && o.Serializer == nil {
-		return nil, fmt.Errorf("cache: an L2 adapter requires a Serializer — add WithSerializer(...) to New()")
+		return nil, fmt.Errorf("cache: an L2 adapter requires a Serializer, add WithSerializer(...) to New()")
 	}
 
 	// Generate a random node ID if none provided
