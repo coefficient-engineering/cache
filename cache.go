@@ -1,3 +1,5 @@
+// Package cache provides a robust hybrid cache for distributed systems,
+// inspired by ZiggyCreatures FusionCache.
 package cache
 
 import (

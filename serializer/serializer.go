@@ -1,3 +1,5 @@
+// Package serializer provides the Serializer interface for the core
+// cache package.
 package serializer
 
 // Serializer encodes and decodes Go values for storage in the L2 adapter.

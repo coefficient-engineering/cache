@@ -1,3 +1,5 @@
+// Package json is an implementation of the cache Serializer using
+// encoding/json.
 package json
 
 import (

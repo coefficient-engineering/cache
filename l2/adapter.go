@@ -1,3 +1,5 @@
+// Package l2 provides the adapter interface for the core
+// cache package.
 package l2
 
 import (

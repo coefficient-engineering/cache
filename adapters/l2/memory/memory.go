@@ -1,3 +1,6 @@
+// Package memory is an implementation of the L2 cache using an
+// in-memory L2 cache, backed by sync.Map.
+// Intended for testing multi-node scenarios in a single process.
 package memory
 
 import (

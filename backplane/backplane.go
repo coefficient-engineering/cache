@@ -1,3 +1,5 @@
+// Package backplane provides the interfaces for implementing a backplane
+// in the core cache package.
 package backplane
 
 import "context"
