@@ -36,15 +36,35 @@ tasks:
       - go tool cover -html=coverage.out -o coverage.html
       - open coverage.html
 
+  test:all:
+    desc: Run tests for all modules in workspace
+    cmds:
+      - |
+        set -e
+        for mod in $(go work edit -json | jq -r '.Use[].DiskPath'); do 
+          echo "Running tests for $mod"
+          go test {{.CLI_ARGS}} "$mod"/... -count=1
+        done
+
+  test:all:race:
+    desc: Run tests for all modules in workspace with race detector
+    cmds:
+      - |
+        set -e
+        for mod in $(go work edit -json | jq -r '.Use[].DiskPath'); do 
+          echo "Running tests for $mod"
+          go test {{.CLI_ARGS}} "$mod"/... -race -count=1
+        done
+
   lint:
     desc: Run static analysis
     cmds:
-      - go vet ./...
+      - golangci-lint run ./...
 
   fmt:
     desc: Format all Go files
     cmds:
-      - gofmt -w .
+      - golangci-lint fmt
 
   check:
     desc: Run all checks (format, lint, build, test)

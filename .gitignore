@@ -1,3 +1,4 @@
 .DS_Store
-tut/
-.github/
+coverage.out
+coverage.html
+.github/copilot-instructions.md
