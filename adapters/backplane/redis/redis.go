@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/coefficient-engineering/cache/backplane"
 	"github.com/google/uuid"
@@ -80,7 +81,24 @@ func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err err
 	pubsub := b.client.Subscribe(context.Background(), b.channel)
 
 	// Wait for subscription confirmation.
-	if _, err := pubsub.Receive(context.Background()); err != nil {
+	receiveCtx, cancelReceive := context.WithCancel(context.Background())
+	defer cancelReceive()
+
+	watchDone := make(chan struct{})
+	go func() {
+		select {
+		case <-b.done:
+			cancelReceive()
+		case <-watchDone:
+		}
+	}()
+	defer close(watchDone)
+
+	receiveTimeoutCtx, cancelTimeout := context.WithTimeout(receiveCtx, 5*time.Second)
+	defer cancelTimeout()
+
+	if _, err := pubsub.Receive(receiveTimeoutCtx); err != nil {
+		_ = pubsub.Close()
 		return nil, err
 	}
 
