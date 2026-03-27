@@ -9,6 +9,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"sync"
 
@@ -56,8 +57,7 @@ func New(client *redis.Client, opts ...Option) *Backplane {
 		client:  client,
 		channel: "cache:backplane",
 		nodeID:  uuid.NewString(),
-		logger:  slog.New(slog.NewTextHandler(nil, nil)),
-		done:    make(chan struct{}),
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)), done: make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(b)

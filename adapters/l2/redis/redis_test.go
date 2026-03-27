@@ -174,7 +174,9 @@ func TestRedisL2_Clear(t *testing.T) {
 	}
 
 	client := a.client.(*goredis.Client)
-	client.Set(ctx, "other:key", "foreign", 5*time.Minute)
+	if err := client.Set(ctx, "other:key", "foreign", 5*time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := a.Clear(ctx); err != nil {
 		t.Fatal(err)

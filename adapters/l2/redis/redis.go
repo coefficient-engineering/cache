@@ -9,6 +9,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"time"
 
@@ -44,7 +45,7 @@ type Adapter struct {
 func New(client redis.Cmdable, opts ...Option) *Adapter {
 	a := &Adapter{
 		client: client,
-		logger: slog.New(slog.NewTextHandler(nil, nil)),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -164,12 +165,17 @@ local members = redis.call('SMEMBERS', tag_set_key)
 local deleted = 0
 
 for _, data_key in ipairs(members) do
-    redis.call('DEL', data_key)
-    -- Derive the original unprefixed key to build the tags metadata key.
-    -- data_key has the prefix, tags key is prefix .. "tags:" .. original_key
-    -- Since data_key = prefix .. original_key, we strip the prefix.
     local original_key = string.sub(data_key, #prefix + 1)
     local tags_key = prefix .. 'tags:' .. original_key
+
+    -- Remove this key from ALL its associated tag sets (not just the one we're clearing)
+    local all_tags = redis.call('SMEMBERS', tags_key)
+    for _, t in ipairs(all_tags) do
+        local other_tag_set = prefix .. 'tag:' .. t
+        redis.call('SREM', other_tag_set, data_key)
+    end
+
+    redis.call('DEL', data_key)
     redis.call('DEL', tags_key)
     deleted = deleted + 1
 end
