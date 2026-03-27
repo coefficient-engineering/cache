@@ -103,8 +103,9 @@ func (e *EventEmitter) emit(event Event) {
 	e.mu.RUnlock()
 
 	for _, slot := range handlers {
-		if slot.fn != nil {
-			slot.fn(event)
+		fn := slot.fn
+		if fn != nil {
+			fn(event)
 		}
 	}
 }

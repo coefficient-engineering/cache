@@ -13,6 +13,8 @@ linters:
         - name: exported
           arguments:
             - checkPrivateReceivers
+    godoclint:
+      default: all
   exclusions:
     generated: lax
     presets:

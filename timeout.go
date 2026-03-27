@@ -70,6 +70,7 @@ func (c *cache) runFactoryWithTimeouts(
 							if r.err == nil {
 								c.storeSafely(context.Background(), key, r.value, opts)
 							}
+							factoryCancel()
 						case <-time.After(safetyTimeout):
 							factoryCancel()
 						}
