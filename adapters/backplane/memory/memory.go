@@ -9,6 +9,34 @@ import (
 	"github.com/coefficient-engineering/cache/backplane"
 )
 
+// Hub connects multiple in-process Backplane instances so that a message
+// published by one is delivered to all others. Use NewHub to create a hub,
+// then NewWithHub to create backplanes that share it.
+type Hub struct {
+	mu         sync.RWMutex
+	backplanes []*Backplane
+}
+
+// NewHub creates a shared hub for connecting multiple in-process backplanes.
+func NewHub() *Hub {
+	return &Hub{}
+}
+
+func (h *Hub) register(bp *Backplane) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.backplanes = append(h.backplanes, bp)
+}
+
+// broadcast delivers msg to all backplanes in the hub except the sender.
+func (h *Hub) broadcast(msg backplane.Message) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, bp := range h.backplanes {
+		bp.deliver(msg)
+	}
+}
+
 // Backplane is an in-process backplane that broadcasts messages via Go channels.
 // All subscribers in the same process receive every message.
 type Backplane struct {
@@ -16,29 +44,48 @@ type Backplane struct {
 	subscribers []chan backplane.Message
 	nodeID      string
 	closed      bool
+	hub         *Hub
 }
 
+// New creates a standalone Backplane that only delivers to its own subscribers.
 func New(nodeID string) *Backplane {
 	return &Backplane{nodeID: nodeID}
 }
 
-func (b *Backplane) Publish(_ context.Context, msg backplane.Message) error {
-	msg.SourceID = b.nodeID
+// NewWithHub creates a Backplane connected to hub so that published messages
+// are delivered to all other backplanes registered on the same hub.
+func NewWithHub(nodeID string, hub *Hub) *Backplane {
+	bp := &Backplane{nodeID: nodeID, hub: hub}
+	hub.register(bp)
+	return bp
+}
 
+// deliver sends msg to this backplane's local subscribers (used by Hub).
+func (b *Backplane) deliver(msg backplane.Message) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-
 	if b.closed {
-		return nil
+		return
 	}
-
 	for _, ch := range b.subscribers {
-		// Non-blocking send, drop message if subscriber is slow
 		select {
 		case ch <- msg:
 		default:
 		}
 	}
+}
+
+func (b *Backplane) Publish(_ context.Context, msg backplane.Message) error {
+	msg.SourceID = b.nodeID
+
+	// Deliver to own subscribers.
+	b.deliver(msg)
+
+	// If part of a hub, broadcast to all other backplanes too.
+	if b.hub != nil {
+		b.hub.broadcast(msg)
+	}
+
 	return nil
 }
 

@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -56,18 +57,18 @@ func TestEvents_Unsubscribe(t *testing.T) {
 	c, _ := newTestCache(t)
 	ctx := context.Background()
 
-	callCount := 0
+	var callCount int64
 	unsub := c.Events().On(func(e Event) {
-		callCount++
+		atomic.AddInt64(&callCount, 1)
 	})
 
 	c.Set(ctx, "key", "value")
-	before := callCount
+	before := atomic.LoadInt64(&callCount)
 
 	unsub()
 
 	c.Set(ctx, "key2", "value2")
-	after := callCount
+	after := atomic.LoadInt64(&callCount)
 
 	if after != before {
 		t.Errorf("handler called after unsubscribe: before=%d after=%d", before, after)

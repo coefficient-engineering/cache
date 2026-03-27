@@ -22,7 +22,13 @@ func TestEagerRefresh_TriggersAtThreshold(t *testing.T) {
 	}
 
 	// Initial population
-	c.GetOrSet(ctx, "key", factory)
+	val, err := c.GetOrSet(ctx, "key", factory)
+	if err != nil {
+		t.Fatalf("initial GetOrSet failed: %v", err)
+	}
+	if val != "value" {
+		t.Fatalf("expected value, got %v", val)
+	}
 	if calls.Load() != 1 {
 		t.Fatalf("expected 1 call, got %d", calls.Load())
 	}
@@ -31,12 +37,12 @@ func TestEagerRefresh_TriggersAtThreshold(t *testing.T) {
 	clk.Advance(9*time.Minute + 6*time.Second)
 
 	// This hit should trigger eager refresh in background
-	val, err := c.GetOrSet(ctx, "key", factory)
-	if err != nil {
-		t.Fatal(err)
+	val2, err2 := c.GetOrSet(ctx, "key", factory)
+	if err2 != nil {
+		t.Fatal(err2)
 	}
-	if val != "value" {
-		t.Fatalf("expected value, got %v", val)
+	if val2 != "value" {
+		t.Fatalf("expected value, got %v", val2)
 	}
 
 	// Wait for background goroutine

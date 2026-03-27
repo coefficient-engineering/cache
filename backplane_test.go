@@ -9,9 +9,10 @@ import (
 )
 
 func TestBackplane_SetInvalidatesRemoteL1(t *testing.T) {
-	// Simulated shared backplane hub
-	bp1 := memorybp.New("node-1")
-	bp2 := memorybp.New("node-2")
+	// Shared hub so bp1 and bp2 can exchange messages
+	hub := memorybp.NewHub()
+	bp1 := memorybp.NewWithHub("node-1", hub)
+	bp2 := memorybp.NewWithHub("node-2", hub)
 
 	c1, _ := newTestCache(t,
 		WithBackplane(bp1),
@@ -33,10 +34,12 @@ func TestBackplane_SetInvalidatesRemoteL1(t *testing.T) {
 	// Allow backplane message to propagate
 	time.Sleep(50 * time.Millisecond)
 
-	// Node 2's L1 should have been invalidated
-	// (In a real setup with shared L2, node 2 would re-read from L2)
-	_, ok, _ := c2.Get(ctx, "key")
-	// ok depends on whether the backplane message reached node 2
-	// With memory backplane in same process, this depends on routing
-	_ = ok
+	// Node 2's L1 should have been invalidated by the backplane message.
+	val, ok, err := c2.Get(ctx, "key")
+	if err != nil {
+		t.Fatalf("unexpected error from c2.Get: %v", err)
+	}
+	if ok && val != "v2" {
+		t.Fatalf("expected L1 invalidated (ok=false) or updated value 'v2', got ok=%v val=%v", ok, val)
+	}
 }

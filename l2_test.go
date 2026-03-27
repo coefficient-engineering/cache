@@ -55,9 +55,12 @@ func TestL2_FailSafe_StaleFromL2(t *testing.T) {
 	ctx := context.Background()
 
 	// Populate L1+L2
-	c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
 		return "original", nil
 	})
+	if err != nil {
+		t.Fatalf("failed to populate cache: %v", err)
+	}
 
 	// Clear L1, advance time past logical expiry
 	c.(*cache).l1.Range(func(key, _ any) bool {

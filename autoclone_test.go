@@ -33,5 +33,18 @@ func TestAutoClone_PreventsMutation(t *testing.T) {
 
 	// Mutate the returned value
 	p := val.(*Product)
-	_ = p
+	p.Price = 999
+
+	// Re-fetch and verify original is unchanged
+	val2, ok2, err := c.Get(ctx, "p1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok2 {
+		t.Fatal("expected hit on second get")
+	}
+	p2 := val2.(*Product)
+	if p2.Price != 100 {
+		t.Errorf("expected original price 100, got %d (mutation was not prevented)", p2.Price)
+	}
 }

@@ -20,9 +20,12 @@ func TestSoftTimeout_ReturnsStaleWhileFactoryContinues(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial value
-	c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
 		return "v1", nil
 	})
+	if err != nil {
+		t.Fatalf("failed to set initial value: %v", err)
+	}
 
 	clk.Advance(2 * time.Minute)
 
@@ -41,8 +44,11 @@ func TestSoftTimeout_ReturnsStaleWhileFactoryContinues(t *testing.T) {
 
 	// Now the fresh value should be cached
 	val, ok, _ := c.Get(ctx, "key")
-	if ok && val == "v2" {
-		// Background completion stored the new value
+	if !ok {
+		t.Fatal("expected cache entry to exist")
+	}
+	if val != "v2" {
+		t.Fatalf("expected refreshed value v2, got %v", val)
 	}
 }
 

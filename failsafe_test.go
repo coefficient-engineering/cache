@@ -48,9 +48,12 @@ func TestFailSafe_ThrottlePreventsRepeatedFactoryCalls(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial population
-	c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
 		return "fresh", nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	clk.Advance(2 * time.Minute)
 
