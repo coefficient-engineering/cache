@@ -478,7 +478,7 @@ func (c *cache) Close() error {
 		if c.bp != nil {
 			_ = c.bp.Close()
 		}
-		c.l1.Close()
+		_ = c.l1.Close()
 	})
 	return nil
 }
