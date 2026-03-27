@@ -31,9 +31,9 @@ Go 1.21 or later.
 
 | module                                                              | version |
 | ------------------------------------------------------------------- | ------- |
-| `github.com/coefficient-engineering/cache`                          | v0.1.0  |
-| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v0.1.0  |
-| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v0.1.0  |
+| `github.com/coefficient-engineering/cache`                          | v0.1.1  |
+| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v0.1.1  |
+| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v0.1.1  |
 
 ---
 
@@ -42,19 +42,19 @@ Go 1.21 or later.
 Core library (L1 only, no external dependencies):
 
 ```sh
-go get github.com/coefficient-engineering/cache@v0.1.0
+go get github.com/coefficient-engineering/cache@v0.1.1
 ```
 
 Redis L2 adapter:
 
 ```sh
-go get github.com/coefficient-engineering/cache/adapters/l2/redis@v0.1.0
+go get github.com/coefficient-engineering/cache/adapters/l2/redis@v0.1.1
 ```
 
 Redis backplane adapter:
 
 ```sh
-go get github.com/coefficient-engineering/cache/adapters/backplane/redis@v0.1.0
+go get github.com/coefficient-engineering/cache/adapters/backplane/redis@v0.1.1
 ```
 
 ---
