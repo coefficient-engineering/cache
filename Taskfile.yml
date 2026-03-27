@@ -1,13 +1,44 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
 
-version: '3'
+version: "3"
 
 vars:
   GREETING: Hello, world!
 
 tasks:
-  default:
-    desc: Print a greeting message
+  build:
+    desc: Compile all packages
     cmds:
-      - echo "{{.GREETING}}"
-    silent: true
+      - go build ./...
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  test:race:
+    desc: Run all tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  test:v:
+    desc: Run all tests with verbose output
+    cmds:
+      - go test -v ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run vet + build (lightweight lint)
+    cmds:
+      - task: vet
+      - task: build
+
+  check:
+    desc: Full CI check (vet + test with race detector)
+    cmds:
+      - task: vet
+      - task: test:race

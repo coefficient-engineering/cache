@@ -10,7 +10,7 @@ import (
 )
 
 // Options configures the entire cache instance.
-// Set once via CacheOption funcs passed to New(). Never mutate after construction.
+// Set once via Option funcs passed to New(). Never mutate after construction.
 type Options struct {
 	// CacheName identifies this cache instance in logs, events, and backplane messages.
 	// Default: "default"
@@ -42,7 +42,7 @@ type Options struct {
 	Logger *slog.Logger
 
 	// NodeID uniquely identifies this cache node in backplane messages.
-	// Used to supress processing of self-sent notifications.
+	// Used to suppress processing of self-sent notifications.
 	// If empty, a random UUID is generated at construction time.
 	NodeID string
 

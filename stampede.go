@@ -1,15 +1,10 @@
 package cache
 
 import (
-	"fmt"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 )
-
-// ErrLockTimeout is returned when LockTImeout elapses before the stampede
-// lock is acquried. The caller may proceed without the lokc (best-effort)
-var ErrLockTimeout = fmt.Errorf("cache: stampede lock timeout")
 
 type stampedeGroup struct {
 	sf singleflight.Group
