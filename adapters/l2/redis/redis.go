@@ -21,12 +21,15 @@ import (
 type Option func(*Adapter)
 
 // WithKeyPrefix sets a prefix prepended to every key stored in Redis.
-// Use this to namespace keys when multiple services share a Redis instance.
+// WithKeyPrefix returns an Option that sets the Adapter's keyPrefix to the provided prefix,
+// which is applied to all Redis keys to namespace them and avoid collisions when multiple
+// services share the same Redis instance.
 func WithKeyPrefix(prefix string) Option {
 	return func(a *Adapter) { a.keyPrefix = prefix }
 }
 
-// WithLogger sets a structured logger for diagnostic output.
+// WithLogger sets the structured logger used by the Adapter.
+// The returned Option assigns the provided logger to the adapter's logger field.
 func WithLogger(logger *slog.Logger) Option {
 	return func(a *Adapter) { a.logger = logger }
 }
@@ -41,7 +44,8 @@ type Adapter struct {
 // New creates a Redis L2 adapter.
 //
 // client can be *redis.Client, *redis.ClusterClient, or *redis.Ring.
-// Options configure key prefix and logging.
+// New creates an Adapter backed by the provided Redis client and applies the given Option functions.
+// The adapter is initialized with a text slog.Logger that writes to io.Discard unless an option overrides it.
 func New(client redis.Cmdable, opts ...Option) *Adapter {
 	a := &Adapter{
 		client: client,

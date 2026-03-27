@@ -22,18 +22,18 @@ import (
 // Option configures a Backplane.
 type Option func(*Backplane)
 
-// WithChannel sets the Redis pub/sub channel name. Default: "cache:backplane".
+// If not provided, the default channel is "cache:backplane".
 func WithChannel(channel string) Option {
 	return func(b *Backplane) { b.channel = channel }
 }
 
 // WithNodeID sets the node identifier used to filter self-messages.
-// If not set, a random UUID is generated.
+// If an empty string is provided, a random UUID will be generated when the Backplane is created.
 func WithNodeID(id string) Option {
 	return func(b *Backplane) { b.nodeID = id }
 }
 
-// WithLogger sets a structured logger for diagnostic output.
+// WithLogger sets the Backplane's logger used for diagnostic logging.
 func WithLogger(logger *slog.Logger) Option {
 	return func(b *Backplane) { b.logger = logger }
 }
@@ -52,7 +52,11 @@ type Backplane struct {
 
 // New creates a Redis-backed backplane.
 //
-// client must be a *redis.Client (pub/sub requires a dedicated connection).
+// New creates a Backplane that uses the provided Redis client for Pub/Sub.
+// The Backplane publishes JSON-encoded messages to and subscribes from a configurable
+// channel, and uses a node identifier to filter messages that originate from the same node.
+// The provided client must be a *redis.Client (Pub/Sub requires a dedicated connection).
+// Options may override the channel, node ID, and logger.
 func New(client *redis.Client, opts ...Option) *Backplane {
 	b := &Backplane{
 		client:  client,
