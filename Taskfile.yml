@@ -2,9 +2,6 @@
 
 version: "3"
 
-vars:
-  GREETING: Hello, world!
-
 tasks:
   build:
     desc: Compile all packages
@@ -14,31 +11,50 @@ tasks:
   test:
     desc: Run all tests
     cmds:
-      - go test ./...
+      - go test ./... -count=1
 
-  test:race:
-    desc: Run all tests with the race detector
-    cmds:
-      - go test -race ./...
-
-  test:v:
+  test:verbose:
     desc: Run all tests with verbose output
     cmds:
-      - go test -v ./...
+      - go test ./... -v -count=1
 
-  vet:
-    desc: Run go vet
+  test:race:
+    desc: Run all tests with race detector
+    cmds:
+      - go test ./... -race -count=1
+
+  test:cover:
+    desc: Run tests with coverage report
+    cmds:
+      - go test ./... -coverprofile=coverage.out
+      - go tool cover -func=coverage.out
+
+  test:cover:html:
+    desc: Generate and open HTML coverage report
+    cmds:
+      - go test ./... -coverprofile=coverage.out
+      - go tool cover -html=coverage.out -o coverage.html
+      - open coverage.html
+
+  lint:
+    desc: Run static analysis
     cmds:
       - go vet ./...
 
-  lint:
-    desc: Run vet + build (lightweight lint)
+  fmt:
+    desc: Format all Go files
     cmds:
-      - task: vet
-      - task: build
+      - gofmt -w .
 
   check:
-    desc: Full CI check (vet + test with race detector)
+    desc: Run all checks (format, lint, build, test)
     cmds:
-      - task: vet
+      - task: fmt
+      - task: lint
+      - task: build
       - task: test:race
+
+  clean:
+    desc: Remove generated files
+    cmds:
+      - rm -f coverage.out coverage.html
