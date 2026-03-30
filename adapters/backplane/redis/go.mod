@@ -2,6 +2,12 @@ module github.com/coefficient-engineering/cache/adapters/backplane/redis
 
 go 1.25.0
 
+// v1.0.0 was published accidentally. v1.0.1 contains only this retraction.
+retract (
+	v1.0.1
+	v1.0.0
+)
+
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/coefficient-engineering/cache v0.1.2
