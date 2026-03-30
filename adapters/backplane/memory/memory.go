@@ -1,5 +1,26 @@
-// Package memory provides an in-process backplane using Go channels.
-// Intended for testing multi-node scenarios in a single process.
+// Package memory provides an in-process [backplane.Backplane] using Go channels.
+//
+// This adapter is intended for testing multi-node scenarios in a single
+// process. It is NOT suitable for production deployments.
+//
+// # Standalone usage
+//
+//	bp := memory.New("node-1")
+//
+// # Multi-node testing with a Hub
+//
+//	hub := memory.NewHub()
+//	bp1 := memory.NewWithHub("node-1", hub)
+//	bp2 := memory.NewWithHub("node-2", hub)
+//
+// # Characteristics
+//
+//   - Subscriber channels are buffered (capacity 64). Messages are dropped
+//     if a subscriber falls behind.
+//   - [Hub] connects multiple backplanes so a message published by one is
+//     delivered to all others.
+//   - Self-message filtering is handled by the adapter: subscribers skip
+//     messages whose SourceID matches the local node ID.
 package memory
 
 import (
@@ -9,15 +30,15 @@ import (
 	"github.com/coefficient-engineering/cache/backplane"
 )
 
-// Hub connects multiple in-process Backplane instances so that a message
-// published by one is delivered to all others. Use NewHub to create a hub,
-// then NewWithHub to create backplanes that share it.
+// Hub connects multiple in-process [Backplane] instances so that a message
+// published by one is delivered to all others. Use [NewHub] to create a hub,
+// then [NewWithHub] to create backplanes that share it.
 type Hub struct {
 	mu         sync.RWMutex
 	backplanes []*Backplane
 }
 
-// NewHub creates a shared hub for connecting multiple in-process backplanes.
+// NewHub creates a shared [Hub] for connecting multiple in-process backplanes.
 func NewHub() *Hub {
 	return &Hub{}
 }
@@ -37,8 +58,11 @@ func (h *Hub) broadcast(msg backplane.Message) {
 	}
 }
 
-// Backplane is an in-process backplane that broadcasts messages via Go channels.
-// All subscribers in the same process receive every message.
+// Backplane is an in-process [backplane.Backplane] that broadcasts messages
+// via Go channels. All subscribers in the same process receive every message.
+//
+// Create one with [New] for standalone use or [NewWithHub] for multi-node
+// testing.
 type Backplane struct {
 	mu          sync.RWMutex
 	subscribers []chan backplane.Message
@@ -47,13 +71,13 @@ type Backplane struct {
 	hub         *Hub
 }
 
-// New creates a standalone Backplane that only delivers to its own subscribers.
+// New creates a standalone [Backplane] that only delivers to its own subscribers.
 func New(nodeID string) *Backplane {
 	return &Backplane{nodeID: nodeID}
 }
 
-// NewWithHub creates a Backplane connected to hub so that published messages
-// are delivered to all other backplanes registered on the same hub.
+// NewWithHub creates a [Backplane] connected to hub so that published messages
+// are delivered to all other backplanes registered on the same [Hub].
 func NewWithHub(nodeID string, hub *Hub) *Backplane {
 	bp := &Backplane{nodeID: nodeID, hub: hub}
 	hub.register(bp)

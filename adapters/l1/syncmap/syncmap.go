@@ -1,3 +1,19 @@
+// Package syncmap provides an unbounded [l1.Adapter] backed by [sync.Map].
+//
+// This is the default L1 adapter used when no custom adapter is passed
+// to [cache.New]. It offers excellent performance under read-heavy
+// workloads due to sync.Map's lock striping, but provides no eviction,
+// no size limits, and no cost awareness.
+//
+// # Characteristics
+//
+//   - Unbounded — no eviction, no size limits.
+//   - Ignores the cost parameter in [Adapter.Set].
+//   - [Adapter.Clear] iterates and deletes all entries (no O(1) clear).
+//   - [Adapter.Close] is a no-op.
+//
+// For production services with memory constraints, consider a bounded
+// adapter backed by Ristretto, Theine, or Otter.
 package syncmap
 
 import (
@@ -7,6 +23,10 @@ import (
 )
 
 // Adapter is an unbounded L1 cache backed by [sync.Map].
+//
+// Create one with [New]:
+//
+//	adapter := syncmap.New()
 //
 // This is the default L1 adapter used when no custom adapter is configured.
 // It offers excellent performance under read-heavy workloads

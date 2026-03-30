@@ -40,8 +40,9 @@ func (e *cacheEntry) IsPhysicallyExpired(now time.Time) bool {
 	return now.After(e.physicalExpiry)
 }
 
-// l2Envelope is serialized (via the configured Serializer) and then passed
-// to the L2Adapter as an opaque []byte. The adapter stores it verbatim.
+// l2Envelope is the wire format for L2 entries. It is JSON-encoded by
+// the core library (not the user-facing [serializer.Serializer]) and then
+// passed to [l2.Adapter] as opaque []byte. The adapter stores it verbatim.
 type l2Envelope struct {
 	// V is the inner user value, serialized by the Serializer.
 	V []byte `json:"v"`

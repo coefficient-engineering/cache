@@ -1,6 +1,15 @@
-// Package memory is an implementation of the L2 cache using an
-// in-memory L2 cache, backed by sync.Map.
-// Intended for testing multi-node scenarios in a single process.
+// Package memory provides an in-process [l2.Adapter] backed by [sync.Map].
+//
+// This adapter is intended for testing multi-node scenarios in a single
+// process. It is NOT suitable for production distributed caching.
+//
+// # Characteristics
+//
+//   - Stores []byte data with optional TTL. Expired entries are lazily
+//     removed on [Adapter.Get].
+//   - Tracks tag-to-key associations using a [sync.Map] of [sync.Map]s.
+//   - [Adapter.Clear] iterates and deletes all entries and tag associations.
+//   - [Adapter.Ping] always returns nil.
 package memory
 
 import (
@@ -17,12 +26,19 @@ type entry struct {
 	tags      []string
 }
 
-// Adapter is an in-process L2 cache backed by sync.Map.
+// Adapter is an in-process L2 cache backed by [sync.Map].
+//
+// Create one with [New]:
+//
+//	adapter := memory.New()
+//
+// Intended for testing multi-node scenarios in a single process.
 type Adapter struct {
 	store sync.Map
 	tags  sync.Map // tag → map[string]struct{} (set of keys)
 }
 
+// New returns a new in-process L2 adapter.
 func New() *Adapter {
 	return &Adapter{}
 }

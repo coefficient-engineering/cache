@@ -52,41 +52,65 @@ func newCache(opts *Options) (*cache, error) {
 	return c, nil
 }
 
-// Option configures an Options at construction time.
+// Option configures an [Options] value at construction time.
+// Pass Option values to [New].
 type Option func(*Options)
 
+// WithCacheName sets [Options.CacheName], which identifies this cache
+// instance in logs, events, and backplane messages. Default: "default".
 func WithCacheName(name string) Option {
 	return func(o *Options) { o.CacheName = name }
 }
 
+// WithKeyPrefix sets [Options.KeyPrefix], prepended to every key before
+// L1, L2, and backplane access. Enables namespace isolation when multiple
+// caches share an L2 backend.
 func WithKeyPrefix(prefix string) Option {
 	return func(o *Options) { o.KeyPrefix = prefix }
 }
 
+// WithL1 sets [Options.L1], the in-process memory cache adapter.
+// If not set, a default [github.com/coefficient-engineering/cache/adapters/l1/syncmap]
+// adapter is used.
 func WithL1(adapter l1.Adapter) Option {
 	return func(o *Options) { o.L1 = adapter }
 }
 
+// WithL2 sets [Options.L2], the distributed cache adapter.
+// Requires [WithSerializer] to also be set.
 func WithL2(adapter l2.Adapter) Option {
 	return func(o *Options) { o.L2 = adapter }
 }
 
+// WithSerializer sets [Options.Serializer], which encodes and decodes Go
+// values for L2 storage and auto-clone. Required when [WithL2] is used.
 func WithSerializer(s serializer.Serializer) Option {
 	return func(o *Options) { o.Serializer = s }
 }
 
+// WithBackplane sets [Options.Backplane], the inter-node invalidation
+// transport. If nil, no cross-node notifications are sent or received.
 func WithBackplane(bp backplane.Backplane) Option {
 	return func(o *Options) { o.Backplane = bp }
 }
 
+// WithLogger sets [Options.Logger], the structured logger for internal
+// diagnostics. If not set, all logging is silently discarded.
 func WithLogger(logger *slog.Logger) Option {
 	return func(o *Options) { o.Logger = logger }
 }
 
+// WithDefaultEntryOptions sets [Options.DefaultEntryOptions], the baseline
+// [EntryOptions] for every cache operation. Per-call [EntryOption] functions
+// are applied on top of a copy of this value.
 func WithDefaultEntryOptions(eo EntryOptions) Option {
 	return func(o *Options) { o.DefaultEntryOptions = eo }
 }
 
+// WithL2CircuitBreaker configures the L2 circuit breaker. threshold is the
+// number of consecutive L2 errors before the breaker opens. openDuration
+// is how long the breaker stays open before attempting recovery. A threshold
+// of 0 disables the L2 circuit breaker.
 func WithL2CircuitBreaker(threshold int, openDuration time.Duration) Option {
 	return func(o *Options) {
 		o.DistributedCacheCircuitBreakerThreshold = threshold
@@ -94,6 +118,9 @@ func WithL2CircuitBreaker(threshold int, openDuration time.Duration) Option {
 	}
 }
 
+// WithBackplaneCircuitBreaker configures the backplane circuit breaker.
+// threshold is the consecutive-failure count before the breaker opens.
+// openDuration is how long it stays open. A threshold of 0 disables it.
 func WithBackplaneCircuitBreaker(threshold int, openDuration time.Duration) Option {
 	return func(o *Options) {
 		o.BackplaneCircuitBreakerThreshold = threshold
@@ -101,10 +128,24 @@ func WithBackplaneCircuitBreaker(threshold int, openDuration time.Duration) Opti
 	}
 }
 
+// WithNodeID sets [Options.NodeID], which uniquely identifies this cache
+// node in backplane messages for self-message suppression. If not set, a
+// random 16-byte hex string is generated.
 func WithNodeID(id string) Option {
 	return func(o *Options) { o.NodeID = id }
 }
 
+// New creates and returns a new [Cache] instance.
+//
+// Validation:
+//   - If L2 is non-nil and Serializer is nil, returns an error.
+//
+// Side effects at construction:
+//   - If NodeID is empty, generates a random 16-byte hex string.
+//   - If Logger is nil, creates a discard logger.
+//   - If L1 is nil, creates a default syncmap adapter.
+//   - If Backplane is non-nil, calls Subscribe to start receiving messages.
+//   - Creates circuit breakers for L2 and backplane (disabled when threshold is 0).
 func New(opts ...Option) (Cache, error) {
 	o := &Options{
 		CacheName:              "default",

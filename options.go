@@ -10,8 +10,13 @@ import (
 	"github.com/coefficient-engineering/cache/serializer"
 )
 
-// Options configures the entire cache instance.
-// Set once via Option funcs passed to New(). Never mutate after construction.
+// Options configures the entire cache instance. Set once via [Option]
+// functions passed to [New]. Never mutated after construction.
+//
+// See the individual field documentation for defaults.
+// See [WithCacheName], [WithKeyPrefix], [WithL1], [WithL2],
+// [WithSerializer], [WithBackplane], [WithLogger], and
+// [WithDefaultEntryOptions] for the functional option constructors.
 type Options struct {
 	// CacheName identifies this cache instance in logs, events, and backplane messages.
 	// Default: "default"
@@ -91,7 +96,24 @@ type Options struct {
 }
 
 // EntryOptions holds all per-entry settings. It is a plain value type;
-// cache copies it on every call so mutations never affect the stored defaults.
+// the cache copies it on every call so mutations never affect the stored
+// defaults.
+//
+// Per-call configuration is expressed as [EntryOption] functions.
+// The cache copies [Options.DefaultEntryOptions] and applies the provided
+// funcs before each operation via [applyOptions].
+//
+// # Defaults
+//
+// When [Options.DefaultEntryOptions] is not explicitly set, [New] uses:
+//
+//   - Duration: 5 * time.Minute
+//   - AllowTimedOutFactoryBackgroundCompletion: true
+//   - AllowBackgroundBackplaneOperations: true
+//   - ReThrowSerializationExceptions: true
+//   - Priority: [PriorityNormal]
+//
+// All other fields default to their zero value.
 type EntryOptions struct {
 	// Duration is how long the entry is considered fresh (logically valid).
 	// When fail-safe is enabled the physical TTL in backing stores is
@@ -236,22 +258,32 @@ type EntryOptions struct {
 }
 
 // EvictionPriority hints to the L1 eviction policy.
+// Higher priority entries are evicted last under memory pressure.
+// Unbounded L1 adapters (like the default sync.Map adapter) ignore this.
 type EvictionPriority int
 
+// Eviction priority constants for the L1 cache.
 const (
-	PriorityLow         EvictionPriority = -1
-	PriorityNormal      EvictionPriority = 0 // default
-	PriorityHigh        EvictionPriority = 1
-	PriorityNeverRemove EvictionPriority = 2
+	PriorityLow         EvictionPriority = -1 // evict first
+	PriorityNormal      EvictionPriority = 0  // default
+	PriorityHigh        EvictionPriority = 1  // evict last
+	PriorityNeverRemove EvictionPriority = 2  // never evict
 )
 
-// EntryOption modifies an EntryOptions. Compose multiple options freely.
+// EntryOption modifies an [EntryOptions] value. Compose multiple options
+// freely; they are applied in order on top of a copy of the cache-wide
+// [Options.DefaultEntryOptions].
 type EntryOption func(*EntryOptions)
 
+// WithDuration sets [EntryOptions.Duration], the logical TTL of the entry.
 func WithDuration(d time.Duration) EntryOption {
 	return func(o *EntryOptions) { o.Duration = d }
 }
 
+// WithFailSafe enables fail-safe and sets [EntryOptions.FailSafeMaxDuration]
+// and [EntryOptions.FailSafeThrottleDuration]. When fail-safe is enabled and
+// a factory or L2 fetch fails, a stale value (if available) is returned
+// instead of an error.
 func WithFailSafe(maxDuration, throttleDuration time.Duration) EntryOption {
 	return func(o *EntryOptions) {
 		o.IsFailSafeEnabled = true
@@ -260,6 +292,10 @@ func WithFailSafe(maxDuration, throttleDuration time.Duration) EntryOption {
 	}
 }
 
+// WithFactoryTimeouts sets [EntryOptions.FactorySoftTimeout] and
+// [EntryOptions.FactoryHardTimeout]. The soft timeout returns a stale value
+// early (factory continues in the background); the hard timeout is an
+// absolute deadline.
 func WithFactoryTimeouts(soft, hard time.Duration) EntryOption {
 	return func(o *EntryOptions) {
 		o.FactorySoftTimeout = soft
@@ -267,6 +303,8 @@ func WithFactoryTimeouts(soft, hard time.Duration) EntryOption {
 	}
 }
 
+// WithDistributedCacheTimeouts sets [EntryOptions.DistributedCacheSoftTimeout]
+// and [EntryOptions.DistributedCacheHardTimeout] for L2 operations.
 func WithDistributedCacheTimeouts(soft, hard time.Duration) EntryOption {
 	return func(o *EntryOptions) {
 		o.DistributedCacheSoftTimeout = soft
@@ -274,14 +312,21 @@ func WithDistributedCacheTimeouts(soft, hard time.Duration) EntryOption {
 	}
 }
 
+// WithEagerRefresh sets [EntryOptions.EagerRefreshThreshold]. The threshold
+// must be in (0.0, 1.0). For example, 0.9 starts a background refresh when
+// 90% of Duration has elapsed.
 func WithEagerRefresh(threshold float32) EntryOption {
 	return func(o *EntryOptions) { o.EagerRefreshThreshold = threshold }
 }
 
+// WithJitter sets [EntryOptions.JitterMaxDuration], adding a random extra
+// TTL in [0, max) to prevent thundering-herd expiry spikes.
 func WithJitter(max time.Duration) EntryOption {
 	return func(o *EntryOptions) { o.JitterMaxDuration = max }
 }
 
+// WithTags appends tag labels to [EntryOptions.Tags] for bulk invalidation
+// via [Cache.DeleteByTag].
 func WithTags(tags ...string) EntryOption {
 	return func(o *EntryOptions) {
 		newTags := make([]string, len(o.Tags), len(o.Tags)+len(tags))
@@ -290,14 +335,21 @@ func WithTags(tags ...string) EntryOption {
 	}
 }
 
+// WithPriority sets [EntryOptions.Priority], an eviction hint for bounded
+// L1 adapters.
 func WithPriority(p EvictionPriority) EntryOption {
 	return func(o *EntryOptions) { o.Priority = p }
 }
 
+// WithBackgroundL2Ops sets [EntryOptions.AllowBackgroundDistributedCacheOperations]
+// to true, making L2 writes fire-and-forget goroutines.
 func WithBackgroundL2Ops() EntryOption {
 	return func(o *EntryOptions) { o.AllowBackgroundDistributedCacheOperations = true }
 }
 
+// WithSkipL2 sets [EntryOptions.SkipL2Read], [EntryOptions.SkipL2Write],
+// and [EntryOptions.SkipBackplaneNotifications] to true, bypassing L2
+// and the backplane entirely for this operation.
 func WithSkipL2() EntryOption {
 	return func(o *EntryOptions) {
 		o.SkipL2Read = true
@@ -306,22 +358,34 @@ func WithSkipL2() EntryOption {
 	}
 }
 
+// WithSkipL2ReadWhenStale sets [EntryOptions.SkipL2ReadWhenStale] to true.
+// When L1 has a stale entry, the L2 check is skipped.
 func WithSkipL2ReadWhenStale() EntryOption {
 	return func(o *EntryOptions) { o.SkipL2ReadWhenStale = true }
 }
 
+// WithAllowStaleOnReadOnly sets [EntryOptions.AllowStaleOnReadOnly] to true,
+// permitting stale values from read-only operations ([Cache.Get]).
 func WithAllowStaleOnReadOnly() EntryOption {
 	return func(o *EntryOptions) { o.AllowStaleOnReadOnly = true }
 }
 
+// WithAutoClone sets [EntryOptions.EnableAutoClone] to true. Values returned
+// from L1 are deep-cloned via the [serializer.Serializer] (marshal then
+// unmarshal) before being returned, preventing callers from mutating cached
+// objects. Requires a Serializer to be configured.
 func WithAutoClone() EntryOption {
 	return func(o *EntryOptions) { o.EnableAutoClone = true }
 }
 
+// WithLockTimeout sets [EntryOptions.LockTimeout], the maximum time to wait
+// for the stampede protection lock. Returns [ErrLockTimeout] on timeout.
 func WithLockTimeout(d time.Duration) EntryOption {
 	return func(o *EntryOptions) { o.LockTimeout = d }
 }
 
+// WithSize sets [EntryOptions.Size], an arbitrary weight hint for bounded
+// L1 adapters.
 func WithSize(n int64) EntryOption {
 	return func(o *EntryOptions) { o.Size = n }
 }
