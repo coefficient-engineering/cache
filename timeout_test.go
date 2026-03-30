@@ -20,7 +20,7 @@ func TestSoftTimeout_ReturnsStaleWhileFactoryContinues(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial value
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "v1", nil
 	})
 	if err != nil {

@@ -45,7 +45,7 @@ func main() {
 	ctx := context.Background()
 
 	// GetOrSet calls the factory on a cache miss and stores the result.
-	value, err := cache.GetOrSet(ctx, c, "greeting", func(ctx context.Context) (string, error) {
+	value, err := cache.GetOrSet(ctx, c, "greeting", func(ctx context.Context, fctx *cache.FactoryExecutionContext) (string, error) {
 		fmt.Println("factory called")
 		return "hello, world", nil
 	})
@@ -55,7 +55,7 @@ func main() {
 	fmt.Println("first call:", value)
 
 	// The second call hits L1. The factory is not called again.
-	value, err = cache.GetOrSet(ctx, c, "greeting", func(ctx context.Context) (string, error) {
+	value, err = cache.GetOrSet(ctx, c, "greeting", func(ctx context.Context, fctx *cache.FactoryExecutionContext) (string, error) {
 		fmt.Println("factory called")
 		return "hello, world", nil
 	})
@@ -126,7 +126,7 @@ func main() {
 	ctx := context.Background()
 
 	// First call: factory succeeds, value is cached.
-	value, err := cache.GetOrSet(ctx, c, "product:1", func(ctx context.Context) (string, error) {
+	value, err := cache.GetOrSet(ctx, c, "product:1", func(ctx context.Context, fctx *cache.FactoryExecutionContext) (string, error) {
 		return "Widget", nil
 	})
 	if err != nil {
@@ -139,7 +139,7 @@ func main() {
 	time.Sleep(3 * time.Second)
 
 	// Second call: factory fails, but fail-safe returns the stale value.
-	value, err = cache.GetOrSet(ctx, c, "product:1", func(ctx context.Context) (string, error) {
+	value, err = cache.GetOrSet(ctx, c, "product:1", func(ctx context.Context, fctx *cache.FactoryExecutionContext) (string, error) {
 		return "", errors.New("database is down")
 	})
 	if err != nil {
@@ -208,7 +208,7 @@ func main() {
 
 	factoryCallCount := 0
 
-	factory := func(ctx context.Context) (string, error) {
+	factory := func(ctx context.Context, fctx *cache.FactoryExecutionContext) (string, error) {
 		factoryCallCount++
 		fmt.Printf("factory called (call #%d)\n", factoryCallCount)
 		return "cached-value", nil

@@ -27,6 +27,7 @@ Task-oriented instructions for specific goals.
 - [Using Jitter](how-to/UsingJitter.md) - Add random TTL variation to prevent thundering-herd expiry
 - [Using Auto-Clone](how-to/UsingAutoClone.md) - Prevent callers from mutating cached values
 - [Using Circuit Breakers](how-to/UsingCircuitBreakers.md) - Protect L2 and the backplane from being hammered during outages
+- [Using Adaptive Caching](how-to/UsingAdaptiveCaching.md) - Let the factory modify entry options at runtime based on the fetched value
 - [Observing Events](how-to/ObservingEvents.md) - Subscribe to cache lifecycle events for metrics and logging
 
 **Infrastructure and Adapters**
@@ -62,3 +63,4 @@ Background knowledge and design rationale.
 - [Circuit Breakers](explanation/CircuitBreakers.md) - The three-state machine and how it protects the system during outages
 - [Backplane and Multi-Node Caching](explanation/BackplaneAndMultiNode.md) - Why L1 caches diverge and how the backplane corrects this
 - [GetOrSet Execution Flow](explanation/GetOrSetExecutionFlow.md) - The complete decision tree from L1 check to factory call to storage
+- [Adaptive Caching](explanation/AdaptiveCaching.md) - How the factory execution context enables runtime option modification

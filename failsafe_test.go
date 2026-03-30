@@ -18,7 +18,7 @@ func TestFailSafe_ReturnsStaleOnError(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial population
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "fresh", nil
 	})
 	if err != nil {
@@ -48,7 +48,7 @@ func TestFailSafe_ThrottlePreventsRepeatedFactoryCalls(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial population
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "fresh", nil
 	})
 	if err != nil {
@@ -59,7 +59,7 @@ func TestFailSafe_ThrottlePreventsRepeatedFactoryCalls(t *testing.T) {
 
 	// First fail-safe activation
 	var factoryCalls atomic.Int32
-	failFactory := func(ctx context.Context) (any, error) {
+	failFactory := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		factoryCalls.Add(1)
 		return nil, errors.New("still down")
 	}
@@ -80,7 +80,7 @@ func TestFailSafe_Disabled_PropagatesError(t *testing.T) {
 	}))
 	ctx := context.Background()
 
-	c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "fresh", nil
 	})
 

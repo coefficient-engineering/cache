@@ -12,10 +12,11 @@ func (c *cache) runFactoryWithTimeouts(
 	staleEntry *cacheEntry,
 	opts EntryOptions,
 	factory FactoryFunc,
+	fctx *FactoryExecutionContext,
 ) (any, error) {
 	// Fast path: no timeouts configured.
 	if opts.FactorySoftTimeout == 0 && opts.FactoryHardTimeout == 0 {
-		return factory(ctx)
+		return factory(ctx, fctx)
 	}
 
 	type result struct {
@@ -27,7 +28,7 @@ func (c *cache) runFactoryWithTimeouts(
 	factoryCtx, factoryCancel := context.WithCancel(ctx)
 
 	go func() {
-		v, err := factory(factoryCtx)
+		v, err := factory(factoryCtx, fctx)
 		resultCh <- result{v, err}
 	}()
 
@@ -48,7 +49,7 @@ func (c *cache) runFactoryWithTimeouts(
 		case r := <-resultCh:
 			// Factory completed.
 			if r.err == nil && softFired && opts.AllowTimedOutFactoryBackgroundCompletion {
-				c.storeSafely(context.Background(), key, r.value, opts)
+				c.storeSafely(context.Background(), key, r.value, *fctx.Options)
 			}
 			factoryCancel()
 			return r.value, r.err
@@ -68,7 +69,7 @@ func (c *cache) runFactoryWithTimeouts(
 						select {
 						case r := <-resultCh:
 							if r.err == nil {
-								c.storeSafely(context.Background(), key, r.value, opts)
+								c.storeSafely(context.Background(), key, r.value, *fctx.Options)
 							}
 							factoryCancel()
 						case <-time.After(safetyTimeout):

@@ -13,7 +13,7 @@ func TestStampede_SingleFactory(t *testing.T) {
 	ctx := context.Background()
 
 	var callCount atomic.Int32
-	factory := func(ctx context.Context) (any, error) {
+	factory := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		callCount.Add(1)
 		time.Sleep(50 * time.Millisecond) // simulate work
 		return "result", nil

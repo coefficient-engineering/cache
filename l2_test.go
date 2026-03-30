@@ -52,7 +52,7 @@ func TestL2_FailSafe_StaleFromL2(t *testing.T) {
 	ctx := context.Background()
 
 	// Populate L1+L2
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "original", nil
 	})
 	if err != nil {

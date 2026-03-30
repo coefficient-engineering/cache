@@ -42,12 +42,18 @@ func (c *cache) maybeStartEagerRefresh(
 		}
 		refreshCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		newValue, err := factory(refreshCtx)
+		refreshOpts := opts
+		refreshFctx := &FactoryExecutionContext{
+			Options:       &refreshOpts,
+			StaleValue:    entry.value,
+			HasStaleValue: true,
+		}
+		newValue, err := factory(refreshCtx, refreshFctx)
 		if err != nil {
 			c.logger.Warn("cache: eager refresh failed", slog.String("key", key), slog.String("error", err.Error()))
 			return
 		}
 		c.events.emit(EventEagerRefreshComplete{Key: key})
-		c.storeSafely(refreshCtx, key, newValue, opts)
+		c.storeSafely(refreshCtx, key, newValue, refreshOpts)
 	}()
 }

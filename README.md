@@ -31,9 +31,9 @@ Go 1.21 or later.
 
 | module                                                              | version |
 | ------------------------------------------------------------------- | ------- |
-| `github.com/coefficient-engineering/cache`                          | v1.0.0  |
-| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v1.0.0  |
-| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v1.0.0  |
+| `github.com/coefficient-engineering/cache`                          | v0.2.0  |
+| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v0.2.0  |
+| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v0.2.0  |
 
 ---
 
