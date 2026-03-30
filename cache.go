@@ -389,7 +389,7 @@ func (c *cache) GetOrSet(
 		c.events.emit(EventFactoryCall{Key: key})
 		// Build the adaptive caching context. fctx.Options points at eo,
 		// so factory mutations to fctx.Options.Duration (etc.) directly
-		// modify eowhich storeSafely reads after the factory returns.
+		// modify eo which storeSafely reads after the factory returns.
 		var staleVal any
 		hasStale := staleEntry != nil
 		if hasStale {
