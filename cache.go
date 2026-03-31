@@ -25,7 +25,7 @@
 //	defer c.Close()
 //
 //	product, err := cache.GetOrSet[*Product](ctx, c, "product:42",
-//	    func(ctx context.Context) (*Product, error) {
+//	    func(ctx context.Context, fctx *cache.FactoryExecutionContext) (*Product, error) {
 //	        return db.GetProduct(ctx, 42)
 //	    },
 //	)
@@ -148,7 +148,7 @@ type Cache interface {
 // Return a non-nil error to signal failure; when fail-safe is enabled and a
 // stale value exists, the error is swallowed and the stale value is returned
 // instead. See [EntryOptions.IsFailSafeEnabled].
-type FactoryFunc func(ctx context.Context) (any, error)
+type FactoryFunc func(ctx context.Context, fctx *FactoryExecutionContext) (any, error)
 
 // GetOrSet is the type-safe counterpart to [Cache.GetOrSet].
 //
@@ -158,12 +158,12 @@ func GetOrSet[T any](
 	ctx context.Context,
 	c Cache,
 	key string,
-	factory func(ctx context.Context) (T, error),
+	factory func(ctx context.Context, fctx *FactoryExecutionContext) (T, error),
 	opts ...EntryOption,
 ) (T, error) {
 	var zero T
-	raw, err := c.GetOrSet(ctx, key, func(ctx context.Context) (any, error) {
-		return factory(ctx)
+	raw, err := c.GetOrSet(ctx, key, func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		return factory(ctx, fctx)
 	}, opts...)
 	if err != nil {
 		return zero, err
@@ -387,7 +387,21 @@ func (c *cache) GetOrSet(
 
 		// factory call
 		c.events.emit(EventFactoryCall{Key: key})
-		newValue, err := c.executeWithFailSafe(ctx, key, staleEntry, eo, factory)
+		// Build the adaptive caching context. fctx.Options points at eo,
+		// so factory mutations to fctx.Options.Duration (etc.) directly
+		// modify eo which storeSafely reads after the factory returns.
+		var staleVal any
+		hasStale := staleEntry != nil
+		if hasStale {
+			staleVal = staleEntry.value
+		}
+		fctx := &FactoryExecutionContext{
+			Options:       &eo,
+			StaleValue:    staleVal,
+			HasStaleValue: hasStale,
+		}
+
+		newValue, err := c.executeWithFailSafe(ctx, key, staleEntry, eo, factory, fctx)
 		if err != nil {
 			c.events.emit(EventFactoryError{Key: key, Err: err})
 			return nil, err

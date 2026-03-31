@@ -16,7 +16,7 @@ func TestEagerRefresh_TriggersAtThreshold(t *testing.T) {
 	ctx := context.Background()
 
 	var calls atomic.Int32
-	factory := func(ctx context.Context) (any, error) {
+	factory := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		calls.Add(1)
 		return "value", nil
 	}
@@ -63,7 +63,7 @@ func TestEagerRefresh_NoDoubleRefresh(t *testing.T) {
 	ctx := context.Background()
 
 	var calls atomic.Int32
-	factory := func(ctx context.Context) (any, error) {
+	factory := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		calls.Add(1)
 		time.Sleep(200 * time.Millisecond) // slow refresh
 		return "value", nil

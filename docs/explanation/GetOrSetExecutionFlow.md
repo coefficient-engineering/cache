@@ -90,6 +90,8 @@ If L2 is configured, `SkipL2Read` is false, and the L2 circuit breaker is not op
 
 ### 8. Factory call with fail-safe and timeouts
 
+Before calling the factory, the cache builds a `FactoryExecutionContext` with `Options` pointing at the local `eo` copy and any available stale value. The factory can modify entry options through this context (adaptive caching). Changes are reflected in `eo` when `storeSafely` reads it after the factory returns.
+
 `executeWithFailSafe` calls `runFactoryWithTimeouts`, which manages the two-tier timeout model:
 
 **Fast path (no timeouts):** The factory is called directly. On success, the value is returned. On error, fail-safe is evaluated.
@@ -158,3 +160,4 @@ The value (and any error) is returned to the caller.
 - [The Fail-Safe Mechanism](FailSafeMechanism.md) for stale value handling
 - [Soft and Hard Timeouts](SoftAndHardTimeouts.md) for the timeout model
 - [Eager Refresh](EagerRefresh.md) for background refresh
+- [Adaptive Caching](AdaptiveCaching.md) for runtime option modification via `FactoryExecutionContext`

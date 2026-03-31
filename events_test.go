@@ -21,12 +21,12 @@ func TestEvents_HitAndMiss(t *testing.T) {
 	})
 
 	// Miss -> factory -> success -> set
-	c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "value", nil
 	})
 
 	// Hit
-	c.GetOrSet(ctx, "key", func(ctx context.Context) (any, error) {
+	c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
 		return "value", nil
 	})
 

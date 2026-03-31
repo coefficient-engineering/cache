@@ -31,9 +31,9 @@ Go 1.21 or later.
 
 | module                                                              | version |
 | ------------------------------------------------------------------- | ------- |
-| `github.com/coefficient-engineering/cache`                          | v1.0.0  |
-| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v1.0.0  |
-| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v1.0.0  |
+| `github.com/coefficient-engineering/cache`                          | v0.2.0  |
+| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v0.2.0  |
+| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v0.2.0  |
 
 ---
 
@@ -122,7 +122,7 @@ func main() {
 	}
 
 	product, err := cache.GetOrSet[*Product](ctx, c, "product:42",
-		func(ctx context.Context) (*Product, error) {
+		func(ctx context.Context, fctx *cache.FactoryExecutionContext) (*Product, error) {
 			// Replace with a real database call.
 			return &Product{ID: 42, Name: "Widget"}, nil
 		},

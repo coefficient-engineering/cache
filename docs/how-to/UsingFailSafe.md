@@ -56,7 +56,7 @@ c, err := cache.New(
     }),
 )
 
-value, err := cache.GetOrSet(ctx, c, "user:42", func(ctx context.Context) (*User, error) {
+value, err := cache.GetOrSet(ctx, c, "user:42", func(ctx context.Context, fctx *cache.FactoryExecutionContext) (*User, error) {
     return db.GetUser(ctx, 42) // fails during outage
 })
 // If a stale value exists, err is nil and value contains the stale user.

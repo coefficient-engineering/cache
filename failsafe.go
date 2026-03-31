@@ -14,8 +14,9 @@ func (c *cache) executeWithFailSafe(
 	staleEntry *cacheEntry,
 	opts EntryOptions,
 	factory FactoryFunc,
+	fctx *FactoryExecutionContext,
 ) (any, error) {
-	value, err := c.runFactoryWithTimeouts(ctx, key, staleEntry, opts, factory)
+	value, err := c.runFactoryWithTimeouts(ctx, key, staleEntry, opts, factory, fctx)
 	if err == nil {
 		return value, nil
 	}
