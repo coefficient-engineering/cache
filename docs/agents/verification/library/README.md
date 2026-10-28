@@ -18,7 +18,7 @@ Each scenario is a short-lived process: `mise exec -- go run ./scripts/verify <s
 ## Doctor
 
 ```sh
-mise exec -- go build ./scripts/verify && rm -f verify && echo DOCTOR_OK
+mise exec -- go build -o /dev/null ./scripts/verify && echo DOCTOR_OK
 ```
 
 `DOCTOR_OK` means the consumer module compiles against the working-tree library through `go.work`. If this fails, the library itself is broken; stop and report INCONCLUSIVE with the compiler output.
@@ -40,7 +40,7 @@ Scenarios live in `scripts/verify/l1.go`; `scripts/verify/main.go` registers the
 
 ## Cleanup
 
-Each scenario closes its cache before exiting; no processes, ports, or files survive except the evidence in `tmp/verification/` (gitignored; keep it). Remove a stray build output with `rm -f verify`.
+Each scenario closes its cache before exiting; no processes, ports, or files survive except the evidence in `tmp/verification/` (gitignored; keep it).
 
 ## Isolation
 

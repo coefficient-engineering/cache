@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Compile all workspace modules (or those owning the given files)"
 set -euo pipefail
-for m in $(scripts/go-modules.sh "$@"); do (cd "$m" && go build ./...); done
+# -o /dev/null: compile only; a module with a single main package would
+# otherwise write its binary into the working tree.
+for m in $(scripts/go-modules.sh "$@"); do (cd "$m" && go build -o /dev/null ./...); done
