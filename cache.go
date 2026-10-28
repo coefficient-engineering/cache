@@ -412,19 +412,21 @@ func (c *cache) GetOrSet(
 	}
 	c.events.emit(EventCacheMiss{Key: key})
 
-	var executed bool
 	doFn := func() (any, error) {
-		executed = true
-		return c.loadOrCreate(ctx, key, &eo, staleEntry, factory)
+		// Each execution gets its own options copy: after a lock timeout an
+		// abandoned call and the caller's bypass may both run.
+		runOpts := eo
+		return c.loadOrCreate(ctx, key, &runOpts, staleEntry, factory)
 	}
 
 	// execute with stampede protection
 	var result any
+	var executed bool
 	var err error
 	if eo.LockTimeout > 0 {
-		result, err, _ = c.stampede.DoWithTimeout(pk, eo.LockTimeout, doFn)
+		result, executed, err = c.stampede.DoWithTimeout(pk, eo.LockTimeout, doFn)
 	} else {
-		result, err, _ = c.stampede.Do(pk, doFn)
+		result, executed, err = c.stampede.Do(pk, doFn)
 	}
 	if err != nil {
 		return nil, err

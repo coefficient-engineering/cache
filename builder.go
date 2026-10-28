@@ -138,17 +138,6 @@ func WithBackplaneCircuitBreaker(threshold int, openDuration time.Duration) Opti
 	}
 }
 
-// WithAutoRecovery enables backplane recovery and configures legacy settings.
-// AutoRecoveryMaxRetries and AutoRecoveryDelay are retained for compatibility
-// but have no effect.
-func WithAutoRecovery(maxRetries int, delay time.Duration) Option {
-	return func(o *Options) {
-		o.BackplaneAutoRecovery = true
-		o.AutoRecoveryMaxRetries = maxRetries
-		o.AutoRecoveryDelay = delay
-	}
-}
-
 // WithNodeID sets [Options.NodeID], which uniquely identifies this cache
 // node in backplane messages for self-message suppression. If not set, a
 // random 16-byte hex string is generated.

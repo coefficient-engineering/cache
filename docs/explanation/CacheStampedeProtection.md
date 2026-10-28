@@ -28,6 +28,8 @@ The `stampedeGroup` type in `stampede.go` wraps `singleflight.Group` with two me
 
 If the timeout elapses, the caller proceeds without the lock and runs the same miss path independently. This can produce a second concurrent factory call, but the original call is unaffected and continues. The caller returns its own path's result rather than a lock-timeout error.
 
+Only waiting on another caller's in-flight call is bounded: if the caller's own call holds the lock (no contention, the factory is just slower than `LockTimeout`), it keeps waiting for that factory instead of starting a second one.
+
 Setting `LockTimeout` trades a small risk of duplicate factory calls against bounded waiting for the lock. In most cases, leaving it at the default (0, meaning wait indefinitely) is correct.
 
 ## Re-check after acquiring the lock

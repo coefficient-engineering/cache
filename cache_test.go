@@ -144,6 +144,80 @@ func TestGetOrSetLockTimeoutProceedsWithoutLock(t *testing.T) {
 	}
 }
 
+func TestGetOrSetLockTimeoutLoneSlowFactoryRunsOnce(t *testing.T) {
+	c, _ := newTestCache(t)
+	var mu sync.Mutex
+	var successes []EventFactorySuccess
+	c.Events().On(func(event Event) {
+		if success, ok := event.(EventFactorySuccess); ok {
+			mu.Lock()
+			successes = append(successes, success)
+			mu.Unlock()
+		}
+	})
+	factory, calls := factoryCounter("value")
+	slow := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		time.Sleep(200 * time.Millisecond)
+		return factory(ctx, fctx)
+	}
+
+	got, err := c.GetOrSet(context.Background(), "lone", slow, WithLockTimeout(50*time.Millisecond))
+	if err != nil || got != "value" {
+		t.Fatalf("GetOrSet = (%v, %v), want (value, nil)", got, err)
+	}
+	// Give a wrongly duplicated execution time to finish and be counted.
+	time.Sleep(300 * time.Millisecond)
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("factory called %d times by a lone caller, want 1", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(successes) != 1 || successes[0].Shared {
+		t.Fatalf("factory success events = %+v, want one with Shared=false", successes)
+	}
+}
+
+func TestGetOrSetLockTimeoutBypassIsNotShared(t *testing.T) {
+	c, _ := newTestCache(t)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := c.GetOrSet(context.Background(), "bypass", func(context.Context, *FactoryExecutionContext) (any, error) {
+			close(firstStarted)
+			<-releaseFirst
+			return "first", nil
+		})
+		firstDone <- err
+	}()
+	<-firstStarted
+
+	var mu sync.Mutex
+	var successes []EventFactorySuccess
+	unsubscribe := c.Events().On(func(event Event) {
+		if success, ok := event.(EventFactorySuccess); ok {
+			mu.Lock()
+			successes = append(successes, success)
+			mu.Unlock()
+		}
+	})
+	if _, err := c.GetOrSet(context.Background(), "bypass", func(context.Context, *FactoryExecutionContext) (any, error) {
+		return "second", nil
+	}, WithLockTimeout(50*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	unsubscribe()
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(successes) != 1 || successes[0].Shared {
+		t.Fatalf("bypass caller's success events = %+v, want one with Shared=false", successes)
+	}
+}
+
 func TestGetOrSet_BasicHitMiss(t *testing.T) {
 	c, _ := newTestCache(t)
 	ctx := context.Background()

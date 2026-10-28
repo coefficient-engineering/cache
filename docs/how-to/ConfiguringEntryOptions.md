@@ -133,7 +133,7 @@ cache.WithAutoClone()
 
 ### Stampede protection
 
-**`WithLockTimeout(d time.Duration)`** sets the maximum time to wait for the stampede protection lock. If the timeout elapses, the caller proceeds without the lock. A value of 0 means wait indefinitely.
+**`WithLockTimeout(d time.Duration)`** sets the maximum time to wait for the stampede protection lock. If the timeout elapses while another caller holds the lock, the caller proceeds without it. A caller that holds the lock itself keeps waiting for its own factory, so a lone slow factory runs only once. A value of 0 means wait indefinitely.
 
 ```go
 cache.WithLockTimeout(5 * time.Second)

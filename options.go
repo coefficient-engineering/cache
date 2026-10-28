@@ -293,8 +293,11 @@ type EntryOptions struct {
 	Tags []string
 
 	// LockTimeout is the maximum time to wait to acquire the stampede protection
-	// lock for this key. After this, the caller proceeds without the lock
-	// (risks a mini-stampede but prevents indefinite starvation).
+	// lock for this key while another caller holds it. After this, the caller
+	// proceeds without the lock (risks a mini-stampede but prevents
+	// indefinite starvation). A caller that holds the lock itself (its own
+	// factory is merely slower than LockTimeout) keeps waiting for its
+	// factory, so the factory never runs twice for one call.
 	// Zero means wait indefinitely.
 	LockTimeout time.Duration
 

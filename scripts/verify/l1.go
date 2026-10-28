@@ -17,6 +17,8 @@ const (
 	concurrentCallers = 50
 	slowFactory       = 100 * time.Millisecond
 	shortDuration     = 50 * time.Millisecond
+	slowFactoryDelay  = 4 * shortDuration // a factory slower than LockTimeout
+	duplicateGrace    = 6 * shortDuration // time for a duplicate factory run to show up
 	failSafeWindow    = time.Hour
 )
 
@@ -53,7 +55,7 @@ func runStampede(ctx context.Context, r *report) error {
 			allSame = false
 		}
 	}
-	r.record(check{Name: "factory-called-once", OK: calls.Load() == 1, Observed: map[string]any{"callers": concurrentCallers, "factory_calls": calls.Load()}})
+	r.record(check{Name: "factory-called-once", OK: calls.Load() == 1, Observed: map[string]any{"callers": concurrentCallers, factoryCallsSnakeKey: calls.Load()}})
 	r.record(check{Name: "all-callers-got-value", OK: allSame, Observed: results[0]})
 	return nil
 }
@@ -141,7 +143,7 @@ func runSkipL2ReadWhenStale(ctx context.Context, r *report) error {
 		if skipL2 {
 			wantValue, wantCalls, wantHits = "factory", 1, 0
 		}
-		r.record(check{Name: fmt.Sprintf("skip-l2-on-stale-%t", skipL2), OK: callErr == nil && got == wantValue && calls.Load() == wantCalls && l2Hits == wantHits, Observed: map[string]any{valueKey: got, "factory_calls": calls.Load(), "l2_hits": l2Hits}})
+		r.record(check{Name: fmt.Sprintf("skip-l2-on-stale-%t", skipL2), OK: callErr == nil && got == wantValue && calls.Load() == wantCalls && l2Hits == wantHits, Observed: map[string]any{valueKey: got, factoryCallsSnakeKey: calls.Load(), "l2_hits": l2Hits}})
 		_ = staleCache.Close()
 		_ = freshCache.Close()
 	}
@@ -176,6 +178,35 @@ func runLockTimeout(ctx context.Context, r *report) error {
 	firstErr := <-firstDone
 	ok := secondErr == nil && firstErr == nil && got == "second" && elapsed < 300*time.Millisecond
 	r.record(check{Name: "timeout-proceeds-without-lock", OK: ok, Observed: map[string]any{valueKey: got, errorKey: errString(secondErr), "elapsed_ms": elapsed.Milliseconds()}})
+	return checkLoneSlowCaller(ctx, r)
+}
+
+// factoryCallsSnakeKey labels observed factory call counts in L1 scenarios.
+const factoryCallsSnakeKey = "factory_calls"
+
+// checkLoneSlowCaller proves a caller holding the lock itself waits for its
+// own factory, slower than LockTimeout, instead of running it twice.
+func checkLoneSlowCaller(ctx context.Context, r *report) error {
+	c, err := cache.New()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	events := &eventLog{}
+	events.attach(c)
+	var calls atomic.Int32
+	got, err := cache.GetOrSet(ctx, c, "lone", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+		calls.Add(1)
+		time.Sleep(slowFactoryDelay)
+		return "lone", nil
+	}, cache.WithLockTimeout(shortDuration))
+	time.Sleep(duplicateGrace) // let a wrongly duplicated factory finish
+	n := calls.Load()
+	successes := events.count("EventFactorySuccess")
+	r.record(check{
+		Name: "lone-slow-caller-runs-factory-once", OK: err == nil && got == "lone" && n == 1 && successes == 1,
+		Observed: map[string]any{valueKey: got, errorKey: errString(err), factoryCallsSnakeKey: n, "factory_success_events": successes},
+	})
 	return nil
 }
 

@@ -90,6 +90,17 @@ When the backplane circuit breaker recovers (transitions from open to closed), t
 
 This is controlled by `BackplaneAutoRecovery` on the `Options` struct (default: `true`).
 
+There is no `With...` helper; to disable recovery, pass a custom `Option`:
+
+```go
+c, err := cache.New(
+    cache.WithBackplane(bp),
+    func(o *cache.Options) { o.BackplaneAutoRecovery = false },
+)
+```
+
+`AutoRecoveryMaxRetries` and `AutoRecoveryDelay` are deprecated and have no effect.
+
 ## Skipping backplane notifications
 
 For a specific operation:
