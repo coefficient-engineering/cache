@@ -19,8 +19,9 @@ func (g *stampedeGroup) Do(key string, fn func() (any, error)) (any, error, bool
 
 // DoWithTimeout is like Do, but the caller gives up waiting after timeout and
 // receives ErrLockTimeout. The in-flight call continues; its result is stored
-// in the cache when it completes (provided AllowTimeOutFactoryBackgroundCompletion
-// is true), benefiting future callers.
+// in the cache when it completes (provided
+// AllowTimedOutFactoryBackgroundCompletion is true), benefiting future
+// callers.
 func (g *stampedeGroup) DoWithTimeout(
 	key string,
 	timeout time.Duration,

@@ -43,12 +43,45 @@ func New() *Adapter {
 	return &Adapter{}
 }
 
-func (a *Adapter) Get(_ context.Context, key string) ([]byte, error) {
+// loadEntry returns the entry stored under key. A value of an unexpected
+// type cannot occur (only *entry is stored) and is treated as a miss.
+func (a *Adapter) loadEntry(key string) (*entry, bool) {
 	raw, ok := a.store.Load(key)
+	if !ok {
+		return nil, false
+	}
+	e, ok := raw.(*entry)
+	return e, ok
+}
+
+// loadTagKeys returns the key set tracked for tag. A value of an unexpected
+// type cannot occur (only [sync.Map] pointers are stored) and is treated as
+// absent.
+func (a *Adapter) loadTagKeys(tag string) (*sync.Map, bool) {
+	raw, ok := a.tags.Load(tag)
+	if !ok {
+		return nil, false
+	}
+	tagKeys, ok := raw.(*sync.Map)
+	return tagKeys, ok
+}
+
+// untag removes key from the key sets of every tag in tags.
+func (a *Adapter) untag(key string, tags []string) {
+	for _, tag := range tags {
+		if tagKeys, ok := a.loadTagKeys(tag); ok {
+			tagKeys.Delete(key)
+		}
+	}
+}
+
+// Get returns the bytes stored under key, or (nil, nil) on a miss.
+// Expired entries are removed lazily and reported as a miss.
+func (a *Adapter) Get(_ context.Context, key string) ([]byte, error) {
+	e, ok := a.loadEntry(key)
 	if !ok {
 		return nil, nil // miss, NOT an error
 	}
-	e := raw.(*entry)
 	if !e.expiresAt.IsZero() && time.Now().After(e.expiresAt) {
 		a.store.Delete(key)
 		return nil, nil // expired = miss
@@ -56,16 +89,12 @@ func (a *Adapter) Get(_ context.Context, key string) ([]byte, error) {
 	return e.data, nil
 }
 
+// Set stores a copy of value under key with the given TTL (0 means no
+// expiry) and replaces any previous tag associations for key with tags.
 func (a *Adapter) Set(_ context.Context, key string, value []byte, ttl time.Duration, tags []string) error {
 	// Clean old tag associations if overwriting an existing entry.
-	if raw, ok := a.store.Load(key); ok {
-		old := raw.(*entry)
-		for _, tag := range old.tags {
-			if raw, ok := a.tags.Load(tag); ok {
-				tagKeys := raw.(*sync.Map)
-				tagKeys.Delete(key)
-			}
-		}
+	if old, ok := a.loadEntry(key); ok {
+		a.untag(key, old.tags)
 	}
 
 	// Defensive copy of data and tags.
@@ -87,40 +116,40 @@ func (a *Adapter) Set(_ context.Context, key string, value []byte, ttl time.Dura
 	// Track tag → key associations.
 	for _, tag := range tagsCopy {
 		raw, _ := a.tags.LoadOrStore(tag, &sync.Map{})
-		tagKeys := raw.(*sync.Map)
-		tagKeys.Store(key, struct{}{})
+		if tagKeys, ok := raw.(*sync.Map); ok {
+			tagKeys.Store(key, struct{}{})
+		}
 	}
 
 	return nil
 }
 
+// Delete removes key and its tag associations. A missing key is not an
+// error.
 func (a *Adapter) Delete(_ context.Context, key string) error {
 	if raw, loaded := a.store.LoadAndDelete(key); loaded {
-		e := raw.(*entry)
-		for _, tag := range e.tags {
-			if raw, ok := a.tags.Load(tag); ok {
-				tagKeys := raw.(*sync.Map)
-				tagKeys.Delete(key)
-			}
+		if e, ok := raw.(*entry); ok {
+			a.untag(key, e.tags)
 		}
 	}
 	return nil // NOT an error if key doesn't exist
 }
 
+// DeleteByTag removes every key associated with tag, then the tag itself.
 func (a *Adapter) DeleteByTag(_ context.Context, tag string) error {
-	raw, ok := a.tags.Load(tag)
+	tagKeys, ok := a.loadTagKeys(tag)
 	if !ok {
 		return nil
 	}
-	tagKeys := raw.(*sync.Map)
 	tagKeys.Range(func(key, _ any) bool {
-		a.store.Delete(key.(string))
+		a.store.Delete(key)
 		return true
 	})
 	a.tags.Delete(tag)
 	return nil
 }
 
+// Clear removes all entries and tag associations.
 func (a *Adapter) Clear(_ context.Context) error {
 	a.store.Range(func(key, _ any) bool {
 		a.store.Delete(key)
@@ -133,8 +162,9 @@ func (a *Adapter) Clear(_ context.Context) error {
 	return nil
 }
 
-func (a *Adapter) Ping(_ context.Context) error {
-	return nil // always healthy
+// Ping always returns nil; the in-process store is always reachable.
+func (*Adapter) Ping(_ context.Context) error {
+	return nil
 }
 
 var _ l2.Adapter = (*Adapter)(nil)

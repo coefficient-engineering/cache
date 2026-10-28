@@ -7,17 +7,16 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/coefficient-engineering/cache/backplane"
 	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/coefficient-engineering/cache/backplane"
 )
 
-func setupBP(t *testing.T, nodeID string) (*Backplane, *miniredis.Miniredis) {
+// setupBP starts a miniredis server and returns a "node-1" backplane on it.
+func setupBP(t *testing.T) (*Backplane, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { client.Close() })
-	bp := New(client, WithNodeID(nodeID), WithChannel("test:backplane"))
-	return bp, mr
+	return setupBPWithAddr(t, "node-1", mr.Addr()), mr
 }
 
 func setupBPWithAddr(t *testing.T, nodeID, addr string) *Backplane {
@@ -28,7 +27,7 @@ func setupBPWithAddr(t *testing.T, nodeID, addr string) *Backplane {
 }
 
 func TestRedisBackplane_PublishSubscribe(t *testing.T) {
-	bp, mr := setupBP(t, "node-1")
+	bp, mr := setupBP(t)
 	defer bp.Close()
 
 	bp2 := setupBPWithAddr(t, "node-2", mr.Addr())
@@ -83,7 +82,7 @@ func TestRedisBackplane_PublishSubscribe(t *testing.T) {
 }
 
 func TestRedisBackplane_SkipSelfMessages(t *testing.T) {
-	bp, _ := setupBP(t, "node-1")
+	bp, _ := setupBP(t)
 	defer bp.Close()
 
 	received := make(chan backplane.Message, 10)
@@ -116,7 +115,7 @@ func TestRedisBackplane_SkipSelfMessages(t *testing.T) {
 }
 
 func TestRedisBackplane_MultipleSubscribers(t *testing.T) {
-	bp1, mr := setupBP(t, "node-1")
+	bp1, mr := setupBP(t)
 	defer bp1.Close()
 
 	bp2 := setupBPWithAddr(t, "node-2", mr.Addr())
@@ -185,7 +184,7 @@ func TestRedisBackplane_MultipleSubscribers(t *testing.T) {
 }
 
 func TestRedisBackplane_Cancel(t *testing.T) {
-	bp, _ := setupBP(t, "node-1")
+	bp, _ := setupBP(t)
 	defer bp.Close()
 
 	received := make(chan backplane.Message, 10)
@@ -220,7 +219,7 @@ func TestRedisBackplane_Cancel(t *testing.T) {
 }
 
 func TestRedisBackplane_Close(t *testing.T) {
-	bp, _ := setupBP(t, "node-1")
+	bp, _ := setupBP(t)
 
 	if err := bp.Close(); err != nil {
 		t.Fatal(err)

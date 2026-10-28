@@ -19,14 +19,18 @@ func newTestCache(t *testing.T, opts ...Option) (Cache, *clock.Mock) {
 	}
 	// inject mock clock
 	setClock(c, clk)
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("failed to close cache: %v", err)
+		}
+	})
 	return c, clk
 }
 
 // factoryCounter returns a factory that counts calls and returns a fixed value.
 func factoryCounter(value any) (FactoryFunc, *atomic.Int32) {
 	count := &atomic.Int32{}
-	factory := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	factory := func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		count.Add(1)
 		return value, nil
 	}
@@ -35,14 +39,14 @@ func factoryCounter(value any) (FactoryFunc, *atomic.Int32) {
 
 // failingFactory returns a factory that always returns the given error.
 func failingFactory(err error) FactoryFunc {
-	return func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	return func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return nil, err
 	}
 }
 
 // slowFactory returns a factory that sleeps for d before returning value.
 func slowFactory(d time.Duration, value any) FactoryFunc {
-	return func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	return func(ctx context.Context, _ *FactoryExecutionContext) (any, error) {
 		select {
 		case <-time.After(d):
 			return value, nil

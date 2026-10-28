@@ -9,26 +9,32 @@ package redis
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/coefficient-engineering/cache/backplane"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/coefficient-engineering/cache/backplane"
 )
+
+// subscribeConfirmTimeout bounds how long Subscribe waits for Redis to
+// confirm the subscription.
+const subscribeConfirmTimeout = 5 * time.Second
 
 // Option configures a Backplane.
 type Option func(*Backplane)
 
+// WithChannel sets the Redis pub/sub channel used for messages.
 // If not provided, the default channel is "cache:backplane".
 func WithChannel(channel string) Option {
 	return func(b *Backplane) { b.channel = channel }
 }
 
 // WithNodeID sets the node identifier used to filter self-messages.
-// If an empty string is provided, a random UUID will be generated when the Backplane is created.
+// If not provided, a random UUID is generated when the Backplane is
+// created.
 func WithNodeID(id string) Option {
 	return func(b *Backplane) { b.nodeID = id }
 }
@@ -50,19 +56,19 @@ type Backplane struct {
 	done   chan struct{}
 }
 
-// New creates a Redis-backed backplane.
+// New creates a Redis-backed Backplane that uses client for pub/sub.
 //
-// New creates a Backplane that uses the provided Redis client for Pub/Sub.
-// The Backplane publishes JSON-encoded messages to and subscribes from a configurable
-// channel, and uses a node identifier to filter messages that originate from the same node.
-// The provided client must be a *redis.Client (Pub/Sub requires a dedicated connection).
-// Options may override the channel, node ID, and logger.
+// The Backplane publishes JSON-encoded messages to, and subscribes from, a
+// configurable channel, and uses a node identifier to filter messages that
+// originate from the same node. The client must be a *redis.Client (pub/sub
+// requires a dedicated connection). Options may override the channel, node
+// ID, and logger.
 func New(client *redis.Client, opts ...Option) *Backplane {
 	b := &Backplane{
 		client:  client,
 		channel: "cache:backplane",
 		nodeID:  uuid.NewString(),
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)), done: make(chan struct{}),
+		logger:  slog.New(slog.DiscardHandler), done: make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -70,6 +76,8 @@ func New(client *redis.Client, opts ...Option) *Backplane {
 	return b
 }
 
+// Publish JSON-encodes msg, stamping SourceID with this node's ID when it
+// is empty, and publishes it to the configured channel.
 func (b *Backplane) Publish(ctx context.Context, msg backplane.Message) error {
 	if msg.SourceID == "" {
 		msg.SourceID = b.nodeID
@@ -81,6 +89,10 @@ func (b *Backplane) Publish(ctx context.Context, msg backplane.Message) error {
 	return b.client.Publish(ctx, b.channel, data).Err()
 }
 
+// Subscribe subscribes to the configured channel, waiting up to
+// subscribeConfirmTimeout for confirmation, and invokes handler on a
+// managed goroutine for every message not sent by this node. The returned
+// cancel func closes the subscription.
 func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err error) {
 	pubsub := b.client.Subscribe(context.Background(), b.channel)
 
@@ -98,7 +110,7 @@ func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err err
 	}()
 	defer close(watchDone)
 
-	receiveTimeoutCtx, cancelTimeout := context.WithTimeout(receiveCtx, 5*time.Second)
+	receiveTimeoutCtx, cancelTimeout := context.WithTimeout(receiveCtx, subscribeConfirmTimeout)
 	defer cancelTimeout()
 
 	if _, err := pubsub.Receive(receiveTimeoutCtx); err != nil {
@@ -146,6 +158,8 @@ func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err err
 	return cancel, nil
 }
 
+// Close stops all subscription goroutines. It is safe to call multiple
+// times. The Redis client is owned by the caller and is not closed.
 func (b *Backplane) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

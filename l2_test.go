@@ -22,7 +22,9 @@ func TestL2_WriteAndReadThrough(t *testing.T) {
 	ctx := context.Background()
 
 	// Write through L1+L2
-	c.Set(ctx, "key", "value")
+	if err := c.Set(ctx, "key", "value"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Clear L1 to force L2 read
 	c.(*cache).l1.Clear()
@@ -52,7 +54,7 @@ func TestL2_FailSafe_StaleFromL2(t *testing.T) {
 	ctx := context.Background()
 
 	// Populate L1+L2
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return "original", nil
 	})
 	if err != nil {

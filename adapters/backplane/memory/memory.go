@@ -1,4 +1,5 @@
-// Package memory provides an in-process [backplane.Backplane] using Go channels.
+// Package memory provides an in-process [backplane.Backplane] using Go
+// channels.
 //
 // This adapter is intended for testing multi-node scenarios in a single
 // process. It is NOT suitable for production deployments.
@@ -71,7 +72,8 @@ type Backplane struct {
 	hub         *Hub
 }
 
-// New creates a standalone [Backplane] that only delivers to its own subscribers.
+// New creates a standalone [Backplane] that only delivers to its own
+// subscribers.
 func New(nodeID string) *Backplane {
 	return &Backplane{nodeID: nodeID}
 }
@@ -99,6 +101,9 @@ func (b *Backplane) deliver(msg backplane.Message) {
 	}
 }
 
+// Publish stamps msg with this node's ID and delivers it to local
+// subscribers and, when part of a [Hub], to every backplane on the hub.
+// Subscribers whose buffer is full drop the message.
 func (b *Backplane) Publish(_ context.Context, msg backplane.Message) error {
 	msg.SourceID = b.nodeID
 
@@ -113,6 +118,9 @@ func (b *Backplane) Publish(_ context.Context, msg backplane.Message) error {
 	return nil
 }
 
+// Subscribe registers handler and invokes it on a managed goroutine for each
+// message not sent by this node. Subscribing to a closed backplane returns a
+// no-op cancel function.
 func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err error) {
 	ch := make(chan backplane.Message, 64)
 
@@ -127,40 +135,51 @@ func (b *Backplane) Subscribe(handler backplane.Handler) (cancel func(), err err
 	done := make(chan struct{})
 	var once sync.Once
 	// Handler runs on a managed goroutine, never on the caller's goroutine
-	go func() {
-		for {
-			select {
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				// Skip self-messages
-				if msg.SourceID == b.nodeID {
-					continue
-				}
-				handler(msg)
-			case <-done:
-				return
-			}
-		}
-	}()
+	go b.dispatch(ch, done, handler)
 
 	cancel = func() {
 		once.Do(func() {
 			close(done)
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			for i, sub := range b.subscribers {
-				if sub == ch {
-					b.subscribers = append(b.subscribers[:i], b.subscribers[i+1:]...)
-					break
-				}
-			}
+			b.removeSubscriber(ch)
 		})
 	}
 	return cancel, nil
 }
 
+// dispatch forwards messages from ch to handler, skipping self-messages,
+// until ch is closed or done is closed.
+func (b *Backplane) dispatch(ch <-chan backplane.Message, done <-chan struct{}, handler backplane.Handler) {
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Skip self-messages
+			if msg.SourceID == b.nodeID {
+				continue
+			}
+			handler(msg)
+		case <-done:
+			return
+		}
+	}
+}
+
+// removeSubscriber unregisters ch so it no longer receives messages.
+func (b *Backplane) removeSubscriber(ch chan backplane.Message) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, sub := range b.subscribers {
+		if sub == ch {
+			b.subscribers = append(b.subscribers[:i], b.subscribers[i+1:]...)
+			return
+		}
+	}
+}
+
+// Close marks the backplane closed and closes every subscriber channel,
+// which stops their dispatch goroutines.
 func (b *Backplane) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

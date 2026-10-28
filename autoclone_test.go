@@ -23,7 +23,9 @@ func TestAutoClone_PreventsMutation(t *testing.T) {
 		Price int
 	}
 
-	c.Set(ctx, "p1", &Product{Name: "Widget", Price: 100})
+	if err := c.Set(ctx, "p1", &Product{Name: "Widget", Price: 100}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Get a clone
 	val, ok, _ := c.Get(ctx, "p1")
@@ -32,7 +34,10 @@ func TestAutoClone_PreventsMutation(t *testing.T) {
 	}
 
 	// Mutate the returned value
-	p := val.(*Product)
+	p, ok := val.(*Product)
+	if !ok {
+		t.Fatalf("expected *Product, got %T", val)
+	}
 	p.Price = 999
 
 	// Re-fetch and verify original is unchanged
@@ -43,7 +48,10 @@ func TestAutoClone_PreventsMutation(t *testing.T) {
 	if !ok2 {
 		t.Fatal("expected hit on second get")
 	}
-	p2 := val2.(*Product)
+	p2, ok := val2.(*Product)
+	if !ok {
+		t.Fatalf("expected *Product, got %T", val2)
+	}
 	if p2.Price != 100 {
 		t.Errorf("expected original price 100, got %d (mutation was not prevented)", p2.Price)
 	}

@@ -9,12 +9,20 @@ func TestTags_DeleteByTag(t *testing.T) {
 	c, _ := newTestCache(t)
 	ctx := context.Background()
 
-	c.Set(ctx, "p1", "product1", WithTags("featured", "electronics"))
-	c.Set(ctx, "p2", "product2", WithTags("featured", "clothing"))
-	c.Set(ctx, "p3", "product3", WithTags("electronics"))
+	if err := c.Set(ctx, "p1", "product1", WithTags("featured", "electronics")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set(ctx, "p2", "product2", WithTags("featured", "clothing")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set(ctx, "p3", "product3", WithTags("electronics")); err != nil {
+		t.Fatal(err)
+	}
 
 	// Delete all "featured" entries
-	c.DeleteByTag(ctx, "featured")
+	if err := c.DeleteByTag(ctx, "featured"); err != nil {
+		t.Fatal(err)
+	}
 
 	_, ok1, _ := c.Get(ctx, "p1")
 	_, ok2, _ := c.Get(ctx, "p2")

@@ -2,8 +2,9 @@ package cache
 
 import (
 	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
 
@@ -70,8 +71,9 @@ func WithKeyPrefix(prefix string) Option {
 }
 
 // WithL1 sets [Options.L1], the in-process memory cache adapter.
-// If not set, a default [github.com/coefficient-engineering/cache/adapters/l1/syncmap]
-// adapter is used.
+// If not set, a default
+// [github.com/coefficient-engineering/cache/adapters/l1/syncmap] adapter is
+// used.
 func WithL1(adapter l1.Adapter) Option {
 	return func(o *Options) { o.L1 = adapter }
 }
@@ -145,7 +147,8 @@ func WithNodeID(id string) Option {
 //   - If Logger is nil, creates a discard logger.
 //   - If L1 is nil, creates a default syncmap adapter.
 //   - If Backplane is non-nil, calls Subscribe to start receiving messages.
-//   - Creates circuit breakers for L2 and backplane (disabled when threshold is 0).
+//   - Creates circuit breakers for L2 and backplane (disabled when the
+//     threshold is 0).
 func New(opts ...Option) (Cache, error) {
 	o := &Options{
 		CacheName:              "default",
@@ -154,7 +157,7 @@ func New(opts ...Option) (Cache, error) {
 		AutoRecoveryDelay:      2 * time.Second,
 		SkipL2OnError:          true,
 		DefaultEntryOptions: EntryOptions{
-			Duration:                                 5 * time.Minute,
+			Duration:                                 defaultEntryDuration,
 			AllowTimedOutFactoryBackgroundCompletion: true,
 			AllowBackgroundBackplaneOperations:       true,
 			ReThrowSerializationExceptions:           true,
@@ -168,7 +171,7 @@ func New(opts ...Option) (Cache, error) {
 
 	// Validate
 	if o.L2 != nil && o.Serializer == nil {
-		return nil, fmt.Errorf("cache: an L2 adapter requires a Serializer, add WithSerializer(...) to New()")
+		return nil, errors.New("cache: an L2 adapter requires a Serializer, add WithSerializer(...) to New()")
 	}
 
 	// Generate a random node ID if none provided
@@ -178,16 +181,22 @@ func New(opts ...Option) (Cache, error) {
 
 	// Discard logger if none provided
 	if o.Logger == nil {
-		o.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		o.Logger = slog.New(slog.DiscardHandler)
 	}
 
 	return newCache(o)
 }
 
+// defaultEntryDuration is the default [EntryOptions.Duration] used by [New].
+const defaultEntryDuration = 5 * time.Minute
+
+// nodeIDBytes is the number of random bytes in a generated node ID.
+const nodeIDBytes = 16
+
 func generateNodeID() string {
-	b := make([]byte, 16)
+	b := make([]byte, nodeIDBytes)
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("failed to generate node ID: %v", err))
 	}
-	return fmt.Sprintf("%x", b)
+	return hex.EncodeToString(b)
 }

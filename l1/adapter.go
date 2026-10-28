@@ -68,12 +68,12 @@ type Adapter interface {
 	Range(fn func(key string, value any) bool)
 
 	// CompareAndSwap atomically replaces the value for key only if the
-	// current value is identical (==) to old. Returns true if the swap
-	// was performed.
+	// current value is identical (==) to oldValue. Returns true if the
+	// swap was performed.
 	//
 	// This is used by Expire to update an entry in-place without racing
 	// with a concurrent Set from another goroutine.
-	CompareAndSwap(key string, old, new any) bool
+	CompareAndSwap(key string, oldValue, newValue any) bool
 
 	// Clear removes all entries from the cache.
 	Clear()

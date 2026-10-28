@@ -25,11 +25,17 @@ func TestBackplane_SetInvalidatesRemoteL1(t *testing.T) {
 	ctx := context.Background()
 
 	// Both nodes have the key
-	c1.Set(ctx, "key", "v1")
-	c2.Set(ctx, "key", "v1")
+	if err := c1.Set(ctx, "key", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c2.Set(ctx, "key", "v1"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Node 1 updates the key
-	c1.Set(ctx, "key", "v2")
+	if err := c1.Set(ctx, "key", "v2"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Allow backplane message to propagate
 	time.Sleep(50 * time.Millisecond)

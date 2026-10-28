@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// defaultEagerRefreshTimeout bounds a background eager refresh when no
+// [EntryOptions.FactoryHardTimeout] is configured.
+const defaultEagerRefreshTimeout = 30 * time.Second
+
+// maybeStartEagerRefresh starts a background factory call for entry once
+// [EntryOptions.EagerRefreshThreshold] of its duration has elapsed. At most
+// one refresh runs per entry. The refresh keeps ctx's values but not its
+// cancellation.
 func (c *cache) maybeStartEagerRefresh(
 	ctx context.Context,
 	key string,
@@ -38,9 +46,9 @@ func (c *cache) maybeStartEagerRefresh(
 		defer entry.eagerRefreshRunning.Store(0)
 		timeout := opts.FactoryHardTimeout
 		if timeout == 0 {
-			timeout = 30 * time.Second
+			timeout = defaultEagerRefreshTimeout
 		}
-		refreshCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 		defer cancel()
 		refreshOpts := opts
 		refreshFctx := &FactoryExecutionContext{

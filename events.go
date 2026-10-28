@@ -38,7 +38,8 @@ type (
 	// EventFactoryCall is emitted when the factory is about to be called.
 	EventFactoryCall struct{ Key string }
 	// EventFactorySuccess is emitted when the factory returns successfully.
-	// Shared indicates the result came from singleflight (another goroutine's call).
+	// Shared indicates the result came from singleflight (another
+	// goroutine's call).
 	EventFactorySuccess struct {
 		Key    string
 		Shared bool
@@ -140,7 +141,8 @@ type EventHandler func(Event)
 
 // EventEmitter is a simple in-process event bus. Safe for concurrent use.
 //
-// Obtain a reference via [Cache.Events]. Register handlers with [EventEmitter.On].
+// Obtain a reference via [Cache.Events]. Register handlers with
+// [EventEmitter.On].
 type EventEmitter struct {
 	mu       sync.RWMutex
 	handlers []*eventHandlerSlot

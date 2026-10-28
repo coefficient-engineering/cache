@@ -14,7 +14,7 @@ func TestAdaptiveCaching_Duration(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, fctx *FactoryExecutionContext) (any, error) {
 			fctx.Options.Duration = 30 * time.Second
 			return "value", nil
 		},
@@ -43,7 +43,7 @@ func TestAdaptiveCaching_Tags(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, fctx *FactoryExecutionContext) (any, error) {
 			fctx.Options.Tags = []string{"dynamic-tag"}
 			return "value", nil
 		},
@@ -53,7 +53,9 @@ func TestAdaptiveCaching_Tags(t *testing.T) {
 	}
 
 	// DeleteByTag should remove the entry.
-	c.DeleteByTag(ctx, "dynamic-tag")
+	if err := c.DeleteByTag(ctx, "dynamic-tag"); err != nil {
+		t.Fatal(err)
+	}
 
 	_, ok, _ := c.Get(ctx, "key")
 	if ok {
@@ -73,7 +75,7 @@ func TestAdaptiveCaching_StaleValue(t *testing.T) {
 
 	// Populate initial value.
 	_, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, fctx *FactoryExecutionContext) (any, error) {
 			if fctx.HasStaleValue {
 				t.Fatal("first call should not have a stale value")
 			}
@@ -88,7 +90,7 @@ func TestAdaptiveCaching_StaleValue(t *testing.T) {
 	clk.Advance(2 * time.Minute)
 
 	val, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, fctx *FactoryExecutionContext) (any, error) {
 			if !fctx.HasStaleValue {
 				t.Fatal("expected HasStaleValue to be true")
 			}
@@ -114,7 +116,7 @@ func TestAdaptiveCaching_SkipL1Write(t *testing.T) {
 	ctx := context.Background()
 
 	val, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, fctx *FactoryExecutionContext) (any, error) {
 			fctx.Options.SkipL1Write = true
 			return "ephemeral", nil
 		},
@@ -141,7 +143,7 @@ func TestAdaptiveCaching_ErrorDiscardsAdaptations(t *testing.T) {
 
 	dbErr := errors.New("db down")
 	_, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, fctx *FactoryExecutionContext) (any, error) {
 			fctx.Options.Duration = 1 * time.Hour // would be used if stored
 			return nil, dbErr
 		},
@@ -165,7 +167,7 @@ func TestAdaptiveCaching_IgnoredContext(t *testing.T) {
 	ctx := context.Background()
 
 	val, err := c.GetOrSet(ctx, "key",
-		func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+		func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 			// fctx is intentionally unused.
 			return "plain", nil
 		},

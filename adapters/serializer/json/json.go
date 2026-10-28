@@ -16,11 +16,13 @@ import (
 // It is stateless and safe for concurrent use.
 type Serializer struct{}
 
-func (s *Serializer) Marshal(v any) ([]byte, error) {
+// Marshal encodes v with [encoding/json.Marshal].
+func (*Serializer) Marshal(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func (s *Serializer) Unmarshal(data []byte, v any) error {
+// Unmarshal decodes data into v with [encoding/json.Unmarshal].
+func (*Serializer) Unmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 

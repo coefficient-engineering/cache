@@ -11,7 +11,8 @@
 // The bytes handed to [Adapter.Set] and returned by [Adapter.Get] are a
 // JSON-encoded envelope containing:
 //
-//   - The inner user value (serialized by the configured [serializer.Serializer])
+//   - The inner user value (serialized by the configured
+//     [serializer.Serializer])
 //   - Logical expiry timestamp (when the value becomes stale)
 //   - Physical expiry timestamp (when the value is removed entirely)
 //   - Tags associated with the entry

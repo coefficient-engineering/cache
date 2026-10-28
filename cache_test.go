@@ -76,8 +76,12 @@ func TestDelete_RemovesEntry(t *testing.T) {
 	c, _ := newTestCache(t)
 	ctx := context.Background()
 
-	c.Set(ctx, "key", "value")
-	c.Delete(ctx, "key")
+	if err := c.Set(ctx, "key", "value"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Delete(ctx, "key"); err != nil {
+		t.Fatal(err)
+	}
 
 	_, ok, _ := c.Get(ctx, "key")
 	if ok {
@@ -89,7 +93,9 @@ func TestExpiry_MockClock(t *testing.T) {
 	c, clk := newTestCache(t)
 	ctx := context.Background()
 
-	c.Set(ctx, "key", "value", WithDuration(5*time.Minute))
+	if err := c.Set(ctx, "key", "value", WithDuration(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
 
 	// Still fresh
 	_, ok, _ := c.Get(ctx, "key")

@@ -107,7 +107,7 @@ type Options struct {
 //
 // When [Options.DefaultEntryOptions] is not explicitly set, [New] uses:
 //
-//   - Duration: 5 * time.Minute
+//   - Duration: 5 * [time.Minute]
 //   - AllowTimedOutFactoryBackgroundCompletion: true
 //   - AllowBackgroundBackplaneOperations: true
 //   - ReThrowSerializationExceptions: true
@@ -259,7 +259,7 @@ type EntryOptions struct {
 
 // EvictionPriority hints to the L1 eviction policy.
 // Higher priority entries are evicted last under memory pressure.
-// Unbounded L1 adapters (like the default sync.Map adapter) ignore this.
+// Unbounded L1 adapters (like the default [sync.Map] adapter) ignore this.
 type EvictionPriority int
 
 // Eviction priority constants for the L1 cache.
@@ -320,9 +320,9 @@ func WithEagerRefresh(threshold float32) EntryOption {
 }
 
 // WithJitter sets [EntryOptions.JitterMaxDuration], adding a random extra
-// TTL in [0, max) to prevent thundering-herd expiry spikes.
-func WithJitter(max time.Duration) EntryOption {
-	return func(o *EntryOptions) { o.JitterMaxDuration = max }
+// TTL in [0, maxJitter) to prevent thundering-herd expiry spikes.
+func WithJitter(maxJitter time.Duration) EntryOption {
+	return func(o *EntryOptions) { o.JitterMaxDuration = maxJitter }
 }
 
 // WithTags appends tag labels to [EntryOptions.Tags] for bulk invalidation
@@ -341,8 +341,9 @@ func WithPriority(p EvictionPriority) EntryOption {
 	return func(o *EntryOptions) { o.Priority = p }
 }
 
-// WithBackgroundL2Ops sets [EntryOptions.AllowBackgroundDistributedCacheOperations]
-// to true, making L2 writes fire-and-forget goroutines.
+// WithBackgroundL2Ops sets
+// [EntryOptions.AllowBackgroundDistributedCacheOperations] to true, making
+// L2 writes fire-and-forget goroutines.
 func WithBackgroundL2Ops() EntryOption {
 	return func(o *EntryOptions) { o.AllowBackgroundDistributedCacheOperations = true }
 }

@@ -21,14 +21,20 @@ func TestEvents_HitAndMiss(t *testing.T) {
 	})
 
 	// Miss -> factory -> success -> set
-	c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return "value", nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Hit
-	c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	_, err = c.GetOrSet(ctx, "key", func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return "value", nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -57,18 +63,22 @@ func TestEvents_Unsubscribe(t *testing.T) {
 	c, _ := newTestCache(t)
 	ctx := context.Background()
 
-	var callCount int64
-	unsub := c.Events().On(func(e Event) {
-		atomic.AddInt64(&callCount, 1)
+	var callCount atomic.Int64
+	unsub := c.Events().On(func(_ Event) {
+		callCount.Add(1)
 	})
 
-	c.Set(ctx, "key", "value")
-	before := atomic.LoadInt64(&callCount)
+	if err := c.Set(ctx, "key", "value"); err != nil {
+		t.Fatal(err)
+	}
+	before := callCount.Load()
 
 	unsub()
 
-	c.Set(ctx, "key2", "value2")
-	after := atomic.LoadInt64(&callCount)
+	if err := c.Set(ctx, "key2", "value2"); err != nil {
+		t.Fatal(err)
+	}
+	after := callCount.Load()
 
 	if after != before {
 		t.Errorf("handler called after unsubscribe: before=%d after=%d", before, after)

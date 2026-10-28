@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"math/rand"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- jitter is not security-sensitive
 	"sync/atomic"
 	"time"
 )
@@ -77,7 +77,7 @@ func effectiveTTL(opts EntryOptions) time.Duration {
 
 	// jitter, random additional duration in [0, JitterMaxDuration]
 	if opts.JitterMaxDuration > 0 {
-		base += time.Duration(rand.Int63n(int64(opts.JitterMaxDuration)))
+		base += rand.N(opts.JitterMaxDuration) //nolint:gosec // jitter is not security-sensitive
 	}
 
 	return base

@@ -14,20 +14,24 @@ import (
 )
 
 // Backplane is a no-op backplane that discards all messages.
-// All methods are no-ops. [Backplane.Subscribe] returns a no-op cancel function.
+// All methods are no-ops. [Backplane.Subscribe] returns a no-op cancel
+// function.
 type Backplane struct{}
 
 // New returns a new no-op [Backplane].
 func New() *Backplane { return &Backplane{} }
 
-func (b *Backplane) Publish(_ context.Context, _ backplane.Message) error {
+// Publish discards msg and returns nil.
+func (*Backplane) Publish(_ context.Context, _ backplane.Message) error {
 	return nil
 }
 
-func (b *Backplane) Subscribe(_ backplane.Handler) (cancel func(), err error) {
+// Subscribe never invokes the handler and returns a no-op cancel function.
+func (*Backplane) Subscribe(_ backplane.Handler) (cancel func(), err error) {
 	return func() {}, nil
 }
 
-func (b *Backplane) Close() error { return nil }
+// Close is a no-op and returns nil.
+func (*Backplane) Close() error { return nil }
 
 var _ backplane.Backplane = (*Backplane)(nil)

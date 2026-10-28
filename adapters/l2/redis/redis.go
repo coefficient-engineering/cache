@@ -1,35 +1,35 @@
 // Package redis is an implementation of the L2 cache adapter using Redis
 // via the go-redis client library.
 //
-// It accepts redis.Cmdable, so it works with *redis.Client, *redis.ClusterClient,
-// and *redis.Ring. Tag tracking uses Redis SETs alongside each data key.
+// It accepts redis.Cmdable, so it works with *redis.Client,
+// *redis.ClusterClient, and *redis.Ring. Tag tracking uses Redis SETs
+// alongside each data key.
 // DeleteByTag uses a Lua script for atomic cleanup.
 package redis
 
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"time"
 
-	"github.com/coefficient-engineering/cache/l2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/coefficient-engineering/cache/l2"
 )
 
 // Option configures an Adapter.
 type Option func(*Adapter)
 
-// WithKeyPrefix sets a prefix prepended to every key stored in Redis.
-// WithKeyPrefix returns an Option that sets the Adapter's keyPrefix to the provided prefix,
-// which is applied to all Redis keys to namespace them and avoid collisions when multiple
-// services share the same Redis instance.
+// WithKeyPrefix returns an Option that sets a prefix prepended to every
+// Redis key, namespacing keys to avoid collisions when multiple services
+// share the same Redis instance.
 func WithKeyPrefix(prefix string) Option {
 	return func(a *Adapter) { a.keyPrefix = prefix }
 }
 
-// WithLogger sets the structured logger used by the Adapter.
-// The returned Option assigns the provided logger to the adapter's logger field.
+// WithLogger returns an Option that sets the structured logger used by the
+// Adapter.
 func WithLogger(logger *slog.Logger) Option {
 	return func(a *Adapter) { a.logger = logger }
 }
@@ -41,15 +41,15 @@ type Adapter struct {
 	logger    *slog.Logger
 }
 
-// New creates a Redis L2 adapter.
+// New creates an Adapter backed by client and applies opts.
 //
 // client can be *redis.Client, *redis.ClusterClient, or *redis.Ring.
-// New creates an Adapter backed by the provided Redis client and applies the given Option functions.
-// The adapter is initialized with a text slog.Logger that writes to io.Discard unless an option overrides it.
+// The adapter logs to a discarding [slog.Logger] unless [WithLogger]
+// overrides it.
 func New(client redis.Cmdable, opts ...Option) *Adapter {
 	a := &Adapter{
 		client: client,
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger: slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -61,13 +61,14 @@ func New(client redis.Cmdable, opts ...Option) *Adapter {
 func (a *Adapter) pk(key string) string { return a.keyPrefix + key }
 
 // tagsKey returns the key that stores the set of tag names for a data key.
-// Format: {prefix}tags:{key}
+// Format: {prefix}tags:{key}.
 func (a *Adapter) tagsKey(key string) string { return a.keyPrefix + "tags:" + key }
 
-// tagSetKey returns the key for the SET that tracks all data keys carrying a tag.
-// Format: {prefix}tag:{tag}
+// tagSetKey returns the key for the SET that tracks all data keys carrying
+// a tag. Format: {prefix}tag:{tag}.
 func (a *Adapter) tagSetKey(tag string) string { return a.keyPrefix + "tag:" + tag }
 
+// Get returns the bytes stored under key, or (nil, nil) on a miss.
 func (a *Adapter) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := a.client.Get(ctx, a.pk(key)).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -79,6 +80,9 @@ func (a *Adapter) Get(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
+// Set stores value under key with the given TTL (0 means no expiry) and
+// replaces the key's tag associations with tags. Tag bookkeeping keys get
+// twice the data TTL so they outlive the data key.
 func (a *Adapter) Set(ctx context.Context, key string, value []byte, ttl time.Duration, tags []string) error {
 	pk := a.pk(key)
 
@@ -118,7 +122,8 @@ func (a *Adapter) Set(ctx context.Context, key string, value []byte, ttl time.Du
 	return err
 }
 
-// cleanOldTags removes the key from any tag sets it was previously associated with.
+// cleanOldTags removes the key from any tag sets it was previously
+// associated with.
 func (a *Adapter) cleanOldTags(ctx context.Context, key string) {
 	pk := a.pk(key)
 	oldTags, err := a.client.SMembers(ctx, a.tagsKey(key)).Result()
@@ -136,6 +141,8 @@ func (a *Adapter) cleanOldTags(ctx context.Context, key string) {
 	}
 }
 
+// Delete removes key and its tag associations. A missing key is not an
+// error.
 func (a *Adapter) Delete(ctx context.Context, key string) error {
 	pk := a.pk(key)
 
@@ -188,6 +195,8 @@ redis.call('DEL', tag_set_key)
 return deleted
 `)
 
+// DeleteByTag atomically removes every key carrying tag, along with their
+// tag bookkeeping, using a Lua script.
 func (a *Adapter) DeleteByTag(ctx context.Context, tag string) error {
 	_, err := deleteByTagScript.Run(ctx, a.client, []string{a.tagSetKey(tag)}, a.keyPrefix).Result()
 	if errors.Is(err, redis.Nil) {
@@ -196,6 +205,9 @@ func (a *Adapter) DeleteByTag(ctx context.Context, tag string) error {
 	return err
 }
 
+// Clear deletes every key under the configured prefix using SCAN. It
+// returns an error when no prefix is set, to avoid wiping a shared
+// namespace.
 func (a *Adapter) Clear(ctx context.Context) error {
 	if a.keyPrefix == "" {
 		return errors.New("redis l2: Clear requires a key prefix to avoid wiping shared namespaces")
@@ -222,6 +234,7 @@ func (a *Adapter) Clear(ctx context.Context) error {
 	return nil
 }
 
+// Ping checks that Redis is reachable.
 func (a *Adapter) Ping(ctx context.Context) error {
 	return a.client.Ping(ctx).Err()
 }

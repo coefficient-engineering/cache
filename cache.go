@@ -49,7 +49,6 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -67,7 +66,7 @@ import (
 //
 // The concrete implementation is created via [New] and is safe
 // for concurrent use by multiple goroutines.
-type Cache interface {
+type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCache
 	// Get returns the cached value for key if present and not logically
 	// expired. Returns (nil, false, nil) on a clean cache miss.
 	//
@@ -229,15 +228,15 @@ func (c *cache) prefixedKey(key string) string {
 	return c.opts.KeyPrefix + key
 }
 
-// storeSafely stores a value to a key onto both the L1 and the L2 caches, as well as
-// updating the backplane when enabled.
+// storeSafely stores a value under key in L1 and L2 and publishes a
+// backplane notification, honouring the skip flags in opts.
 func (c *cache) storeSafely(ctx context.Context, key string, value any, opts EntryOptions) {
 	pk := c.prefixedKey(key)
 	now := c.clock.Now()
 
 	// compute expiry times
 	logicalExpiry := now.Add(opts.Duration)
-	physicalExpiry := c.computePhysicalExpiry(now, opts)
+	physicalExpiry := computePhysicalExpiry(now, opts)
 
 	entry := &cacheEntry{
 		value:          value,
@@ -249,10 +248,7 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 
 	// L1 write
 	if !opts.SkipL1Write {
-		c.l1.Set(pk, entry, opts.Size)
-		if len(opts.Tags) > 0 {
-			c.tagIdx.add(pk, opts.Tags)
-		}
+		c.setL1Entry(pk, entry, opts.Size)
 	}
 
 	// L2 write
@@ -266,17 +262,66 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 	}
 }
 
-func (c *cache) computePhysicalExpiry(now time.Time, opts EntryOptions) (physicalExpiry time.Time) {
+// computePhysicalExpiry returns when an entry written at now is physically
+// removed: after FailSafeMaxDuration when fail-safe extends it, otherwise
+// after Duration.
+func computePhysicalExpiry(now time.Time, opts EntryOptions) time.Time {
 	if opts.IsFailSafeEnabled && opts.FailSafeMaxDuration > opts.Duration {
 		return now.Add(opts.FailSafeMaxDuration)
 	}
 	return now.Add(opts.Duration)
 }
 
+// l1Entry returns the L1 entry stored under the prefixed key pk.
+func (c *cache) l1Entry(pk string) (*cacheEntry, bool) {
+	raw, ok := c.l1.Get(pk)
+	if !ok {
+		return nil, false
+	}
+	entry, ok := raw.(*cacheEntry)
+	return entry, ok
+}
+
+// setL1Entry stores entry in L1 under pk and indexes its tags.
+func (c *cache) setL1Entry(pk string, entry *cacheEntry, size int64) {
+	c.l1.Set(pk, entry, size)
+	if len(entry.tags) > 0 {
+		c.tagIdx.add(pk, entry.tags)
+	}
+}
+
+// evictL1 removes pk from L1 and drops it from the tag index.
+func (c *cache) evictL1(pk string) {
+	raw, loaded := c.l1.LoadAndDelete(pk)
+	if !loaded {
+		return
+	}
+	if entry, ok := raw.(*cacheEntry); ok && len(entry.tags) > 0 {
+		c.tagIdx.remove(pk, entry.tags)
+	}
+}
+
+// expireL1 replaces the L1 entry under pk with a copy that is logically
+// expired now, keeping it available as a fail-safe fallback.
+func (c *cache) expireL1(pk string) {
+	old, ok := c.l1Entry(pk)
+	if !ok {
+		return
+	}
+	expired := &cacheEntry{
+		value:          old.value,
+		logicalExpiry:  c.clock.Now(),
+		physicalExpiry: old.physicalExpiry,
+		createdAt:      old.createdAt,
+		tags:           old.tags,
+	}
+	c.l1.CompareAndSwap(pk, old, expired)
+}
+
 // maybeAutoClone prevents callers from modifying cached pointers directly
 // by serializing and deserializing the return value to clone it.
 // Uses reflection to allocate a fresh value of the correct concrete type,
-// ensuring pointer types get a true deep copy rather than a shallow pointer copy.
+// ensuring pointer types get a true deep copy rather than a shallow copy.
 func (c *cache) maybeAutoClone(value any, opts EntryOptions) (any, error) {
 	if !opts.EnableAutoClone || c.serializer == nil || value == nil {
 		return value, nil
@@ -290,7 +335,7 @@ func (c *cache) maybeAutoClone(value any, opts EntryOptions) (any, error) {
 	// Allocate a new value of the same concrete type via reflection.
 	t := reflect.TypeOf(value)
 	var target reflect.Value
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		target = reflect.New(t.Elem()) // *T → new(T), returns *T
 	} else {
 		target = reflect.New(t) // T → new(T), returns *T
@@ -298,25 +343,26 @@ func (c *cache) maybeAutoClone(value any, opts EntryOptions) (any, error) {
 	if err := c.serializer.Unmarshal(data, target.Interface()); err != nil {
 		return value, err
 	}
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		return target.Interface(), nil
 	}
 	return target.Elem().Interface(), nil
 }
 
-// Returns the cached value for `key`. On a cache miss, calls `factory`, stores the result, and returns it.
-// This is the primary method.
+// GetOrSet returns the cached value for key. On a cache miss it calls
+// factory, stores the result, and returns it. This is the primary method.
 //
 // The full execution path:
 //
-// 1. Read L1 (unless `SkipL1Read`)
-// 2. On L1 miss, enter stampede protection (singleflight)
-// 3. Re-check L1 inside the lock
-// 4. Read L2 if configured (unless `SkipL2Read` or circuit breaker open)
-// 5. Call `factory` with fail-safe and timeout handling
-// 6. Store result in L1, L2, and notify backplane
+//  1. Read L1 (unless SkipL1Read)
+//  2. On L1 miss, enter stampede protection (singleflight)
+//  3. Re-check L1 inside the lock
+//  4. Read L2 if configured (unless SkipL2Read or circuit breaker open)
+//  5. Call factory with fail-safe and timeout handling
+//  6. Store result in L1, L2, and notify backplane
 //
-// On a fresh L1 hit with `EagerRefreshThreshold` configured, a background refresh may be started.
+// On a fresh L1 hit with EagerRefreshThreshold configured, a background
+// refresh may be started.
 func (c *cache) GetOrSet(
 	ctx context.Context,
 	key string,
@@ -330,86 +376,20 @@ func (c *cache) GetOrSet(
 	// L1 read
 	var staleEntry *cacheEntry
 	if !eo.SkipL1Read {
-		if raw, ok := c.l1.Get(pk); ok {
-			entry := raw.(*cacheEntry)
-			if !entry.IsLogicallyExpired(now) {
-				// fresh hit
-				c.events.emit(EventCacheHit{Key: key})
-				c.maybeStartEagerRefresh(ctx, key, entry, eo, factory)
-				val, err := c.maybeAutoClone(entry.value, eo)
-				return val, err
-			}
-			// stale hit, keep as fail safe fallback
-			staleEntry = entry
+		entry, ok := c.l1Entry(pk)
+		if ok && !entry.IsLogicallyExpired(now) {
+			// fresh hit
+			c.events.emit(EventCacheHit{Key: key})
+			c.maybeStartEagerRefresh(ctx, key, entry, eo, factory)
+			return c.maybeAutoClone(entry.value, eo)
 		}
+		// stale hit (or miss), keep as fail safe fallback
+		staleEntry = entry
 	}
 	c.events.emit(EventCacheMiss{Key: key})
 
 	doFn := func() (any, error) {
-		now := c.clock.Now()
-
-		// recheck L1 in case another goroutine populated it while we waited
-		if !eo.SkipL1Read {
-			if raw, ok := c.l1.Get(pk); ok {
-				entry := raw.(*cacheEntry)
-				if !entry.IsLogicallyExpired(now) {
-					return entry.value, nil
-				}
-			}
-		}
-
-		// L2 read
-		if c.l2 != nil && !eo.SkipL2Read && !c.l2CB.IsOpen() {
-			l2Value, l2Entry, err := c.readL2(ctx, key, eo)
-			if err != nil {
-				// readL2 emits EventL2Error internally
-			} else if l2Entry != nil {
-				if !l2Entry.IsLogicallyExpired(now) {
-					// fresh l2 hit, promote to l1
-					c.events.emit(EventL2Hit{Key: key})
-					if !eo.SkipL1Write {
-						c.l1.Set(pk, l2Entry, eo.Size)
-						if len(l2Entry.tags) > 0 {
-							c.tagIdx.add(pk, l2Entry.tags)
-						}
-					}
-					return l2Value, nil
-				}
-				// stale l2, use fail safe candidate
-				if staleEntry == nil {
-					staleEntry = l2Entry
-				}
-				c.events.emit(EventL2Miss{Key: key})
-			} else {
-				c.events.emit(EventL2Miss{Key: key})
-			}
-		}
-
-		// factory call
-		c.events.emit(EventFactoryCall{Key: key})
-		// Build the adaptive caching context. fctx.Options points at eo,
-		// so factory mutations to fctx.Options.Duration (etc.) directly
-		// modify eo which storeSafely reads after the factory returns.
-		var staleVal any
-		hasStale := staleEntry != nil
-		if hasStale {
-			staleVal = staleEntry.value
-		}
-		fctx := &FactoryExecutionContext{
-			Options:       &eo,
-			StaleValue:    staleVal,
-			HasStaleValue: hasStale,
-		}
-
-		newValue, err := c.executeWithFailSafe(ctx, key, staleEntry, eo, factory, fctx)
-		if err != nil {
-			c.events.emit(EventFactoryError{Key: key, Err: err})
-			return nil, err
-		}
-
-		c.events.emit(EventFactorySuccess{Key: key})
-		c.storeSafely(ctx, key, newValue, eo)
-		return newValue, nil
+		return c.loadOrCreate(ctx, key, &eo, staleEntry, factory)
 	}
 
 	// execute with stampede protection
@@ -426,9 +406,85 @@ func (c *cache) GetOrSet(
 	return c.maybeAutoClone(result, eo)
 }
 
-// Get returns the cached value for `key` if present and not logically expired. Returns `(nil, false, nil)` on a clean cache miss.
-// When `AllowStaleOnReadOnly` is set, logically expired values are returned with `ok == true`.
-// The event emitted in that case is `EventCacheHit` with `IsStale: true`.
+// loadOrCreate is the stampede-protected miss path of GetOrSet: it
+// re-checks L1, then reads L2, then calls the factory. eo is shared with
+// the factory via [FactoryExecutionContext.Options], so mutations made by
+// the factory are visible to the caller.
+func (c *cache) loadOrCreate(
+	ctx context.Context,
+	key string,
+	eo *EntryOptions,
+	staleEntry *cacheEntry,
+	factory FactoryFunc,
+) (any, error) {
+	pk := c.prefixedKey(key)
+	now := c.clock.Now()
+
+	// recheck L1 in case another goroutine populated it while we waited
+	if !eo.SkipL1Read {
+		if entry, ok := c.l1Entry(pk); ok && !entry.IsLogicallyExpired(now) {
+			return entry.value, nil
+		}
+	}
+
+	// L2 read
+	l2Value, l2Stale, l2Hit := c.loadFromL2(ctx, key, now, *eo)
+	if l2Hit {
+		return l2Value, nil
+	}
+	if staleEntry == nil {
+		staleEntry = l2Stale
+	}
+
+	return c.callFactory(ctx, key, eo, staleEntry, factory)
+}
+
+// callFactory runs factory with fail-safe and timeout handling and stores
+// a successful result.
+func (c *cache) callFactory(
+	ctx context.Context,
+	key string,
+	eo *EntryOptions,
+	staleEntry *cacheEntry,
+	factory FactoryFunc,
+) (any, error) {
+	c.events.emit(EventFactoryCall{Key: key})
+	// Build the adaptive caching context. fctx.Options points at eo,
+	// so factory mutations to fctx.Options.Duration (etc.) directly
+	// modify eo which storeSafely reads after the factory returns.
+	var staleVal any
+	hasStale := staleEntry != nil
+	if hasStale {
+		staleVal = staleEntry.value
+	}
+	call := &factoryCall{
+		key:        key,
+		staleEntry: staleEntry,
+		opts:       *eo,
+		factory:    factory,
+		fctx: &FactoryExecutionContext{
+			Options:       eo,
+			StaleValue:    staleVal,
+			HasStaleValue: hasStale,
+		},
+	}
+
+	newValue, err := c.executeWithFailSafe(ctx, call)
+	if err != nil {
+		c.events.emit(EventFactoryError{Key: key, Err: err})
+		return nil, err
+	}
+
+	c.events.emit(EventFactorySuccess{Key: key})
+	c.storeSafely(ctx, key, newValue, *eo)
+	return newValue, nil
+}
+
+// Get returns the cached value for key if present and not logically
+// expired. Returns (nil, false, nil) on a clean cache miss.
+// When AllowStaleOnReadOnly is set, logically expired values are returned
+// with ok == true. The event emitted in that case is [EventCacheHit] with
+// IsStale: true.
 //
 // Reads L1 first, then L2 if configured and L1 missed.
 func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, bool, error) {
@@ -438,70 +494,41 @@ func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, 
 
 	// L1 read
 	if !eo.SkipL1Read {
-		if raw, ok := c.l1.Get(pk); ok {
-			entry := raw.(*cacheEntry)
-			if !entry.IsLogicallyExpired(now) {
-				c.events.emit(EventCacheHit{Key: key})
-				val, err := c.maybeAutoClone(entry.value, eo)
-				return val, true, err
-			}
-			// stale entry
-			if eo.AllowStaleOnReadOnly {
-				c.events.emit(EventCacheHit{Key: key, IsStale: true})
-				val, err := c.maybeAutoClone(entry.value, eo)
-				return val, true, err
-			}
+		entry, ok := c.l1Entry(pk)
+		if ok && (!entry.IsLogicallyExpired(now) || eo.AllowStaleOnReadOnly) {
+			c.events.emit(EventCacheHit{Key: key, IsStale: entry.IsLogicallyExpired(now)})
+			val, err := c.maybeAutoClone(entry.value, eo)
+			return val, true, err
 		}
 	}
 
 	// L2 read
-	if c.l2 != nil && !eo.SkipL2Read && !c.l2CB.IsOpen() {
-		l2Value, l2Entry, err := c.readL2(ctx, key, eo)
-		if err != nil {
-			// readL2 emits EventL2Error internally
-		} else if l2Entry != nil {
-			if !l2Entry.IsLogicallyExpired(now) || eo.AllowStaleOnReadOnly {
-				if !l2Entry.IsLogicallyExpired(now) {
-					c.events.emit(EventL2Hit{Key: key})
-				}
-				if !eo.SkipL1Write {
-					c.l1.Set(pk, l2Entry, eo.Size)
-					if len(l2Entry.tags) > 0 {
-						c.tagIdx.add(pk, l2Entry.tags)
-					}
-				}
-				val, err := c.maybeAutoClone(l2Value, eo)
-				return val, true, err
-			}
-		}
+	if val, ok, err := c.getFromL2(ctx, key, now, eo); ok {
+		return val, true, err
 	}
 
 	c.events.emit(EventCacheMiss{Key: key})
 	return nil, false, nil
 }
 
-// Set stores `value` under `key` in all configured cache layers (L1, L2) and publishes
-// a backplane notification. Skip flags in `EntryOptions` control which layers are written.
+// Set stores value under key in all configured cache layers (L1, L2) and
+// publishes a backplane notification. Skip flags in [EntryOptions] control
+// which layers are written.
 func (c *cache) Set(ctx context.Context, key string, value any, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	c.storeSafely(ctx, key, value, eo)
 	return nil
 }
 
-// Removes the entry from L1 and L2. Publishes a `MessageTypeDelete`
-// backplane notification.
+// Delete removes the entry from L1 and L2. Publishes a
+// [backplane.MessageTypeDelete] backplane notification.
 // Does not error if the key does not exist.
 func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	pk := c.prefixedKey(key)
 
 	// remove from l1
-	if raw, loaded := c.l1.LoadAndDelete(pk); loaded {
-		entry := raw.(*cacheEntry)
-		if len(entry.tags) > 0 {
-			c.tagIdx.remove(pk, entry.tags)
-		}
-	}
+	c.evictL1(pk)
 
 	// remove from l2
 	if c.l2 != nil && !eo.SkipL2Write {
@@ -517,25 +544,14 @@ func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) err
 	return nil
 }
 
-// Marks the entry as logically expired without removing it from L1.
-// The value remains available as a fail-safe fallback until physical expiry.
-// If fail-safe is not enabled on subsequent reads, the stale value is not returned.
-// Publishes a `MessageTypeExpire` backplane notification.
+// Expire marks the entry as logically expired without removing it from L1.
+// The value remains available as a fail-safe fallback until physical
+// expiry. If fail-safe is not enabled on subsequent reads, the stale value
+// is not returned. Publishes a [backplane.MessageTypeExpire] backplane
+// notification.
 func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
-	pk := c.prefixedKey(key)
-
-	if raw, ok := c.l1.Get(pk); ok {
-		old := raw.(*cacheEntry)
-		expired := &cacheEntry{
-			value:          old.value,
-			logicalExpiry:  c.clock.Now(), // expired now
-			physicalExpiry: old.physicalExpiry,
-			createdAt:      old.createdAt,
-			tags:           old.tags,
-		}
-		c.l1.CompareAndSwap(pk, raw, expired)
-	}
+	c.expireL1(c.prefixedKey(key))
 
 	// Notify backplane
 	if c.bp != nil && !eo.SkipBackplaneNotifications {
@@ -545,9 +561,10 @@ func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) err
 	return nil
 }
 
-// Removes all entries associated with `tag` from L1 (via the in-memory tag index) and
-// L2 (via `L2Adapter.DeleteByTag`).
-// Publishes a `MessageTypeDelete` backplane notification for each removed key.
+// DeleteByTag removes all entries associated with tag from L1 (via the
+// in-memory tag index) and L2 (via [l2.Adapter.DeleteByTag]). Publishes a
+// [backplane.MessageTypeDelete] backplane notification for each removed
+// key.
 func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 
@@ -556,10 +573,7 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 
 	// Remove from L1
 	for _, pk := range keys {
-		if raw, loaded := c.l1.LoadAndDelete(pk); loaded {
-			entry := raw.(*cacheEntry)
-			c.tagIdx.remove(pk, entry.tags)
-		}
+		c.evictL1(pk)
 	}
 
 	// Remove from L2 (adapter handles its own tag bookkeeping)
@@ -583,10 +597,10 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 	return nil
 }
 
-// Removes all entries from L1 and clears the tag index. When `clearL2` is true and
-// an L2 adapter is configured, calls `L2Adapter.Clear`.
-// Publishes a `MessageTypeClear` backplane notification.
-func (c *cache) Clear(ctx context.Context, clearL2 bool) error {
+// Clear removes all entries from L1 and clears the tag index. When clearL2
+// is true and an L2 adapter is configured, calls [l2.Adapter.Clear].
+// Publishes a [backplane.MessageTypeClear] backplane notification.
+func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive // flag-parameter: public API mirrors IFusionCache
 	// Clear L1: iterate and delete all entries
 	c.l1.Clear()
 
@@ -610,8 +624,9 @@ func (c *cache) Clear(ctx context.Context, clearL2 bool) error {
 	return nil
 }
 
-// Shuts down background goroutines (backplane subscription) and releases resources.
-// Calls `Close` on the backplane and L1 adapter. Safe to call multiple times.
+// Close shuts down background goroutines (backplane subscription) and
+// releases resources. Calls Close on the backplane and L1 adapter. Safe to
+// call multiple times.
 func (c *cache) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.done)
@@ -627,241 +642,19 @@ func (c *cache) Close() error {
 	return nil
 }
 
-// Returns the configured cache name. Defaults to `"default"`.
+// Name returns the configured cache name. Defaults to "default".
 func (c *cache) Name() string {
 	return c.opts.CacheName
 }
 
-// Returns a copy of the cache-wide default entry options.
-// Safe to read and modify without affecting the cache.
+// DefaultEntryOptions returns a copy of the cache-wide default entry
+// options. Safe to read and modify without affecting the cache.
 func (c *cache) DefaultEntryOptions() EntryOptions {
 	return c.opts.DefaultEntryOptions // value copy, safe to return
 }
 
-// Returns the `EventEmitter` for subscribing to cache lifecycle events.
+// Events returns the [EventEmitter] for subscribing to cache lifecycle
+// events.
 func (c *cache) Events() *EventEmitter {
 	return &c.events
-}
-
-// writeL2 writes a value to the L2 distributed cache.
-func (c *cache) writeL2(ctx context.Context, key string, value any, opts EntryOptions) {
-	if c.l2CB.IsOpen() {
-		return // circuit breaker open; skip l2
-	}
-	pk := c.prefixedKey(key)
-	doWrite := func() {
-		data, err := c.marshalL2Entry(value, opts)
-		if err != nil {
-			if opts.ReThrowSerializationExceptions {
-				c.logger.Error("cache: L2 serialization failed",
-					slog.String("key", pk),
-					slog.String("error", err.Error()),
-				)
-			}
-			return
-		}
-		ttl := effectiveTTL(opts)
-		writeCtx := ctx
-		if opts.DistributedCacheHardTimeout > 0 {
-			var cancel context.CancelFunc
-			writeCtx, cancel = context.WithTimeout(ctx, opts.DistributedCacheHardTimeout)
-			defer cancel()
-		}
-		err = c.l2.Set(writeCtx, pk, data, ttl, opts.Tags)
-		c.l2CB.Record(err)
-		if err != nil {
-			c.events.emit(EventL2Error{Key: key, Err: err})
-			c.logger.Warn("cache: L2 write failed",
-				slog.String("key", pk),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-	if opts.AllowBackgroundDistributedCacheOperations {
-		go doWrite()
-	} else {
-		doWrite()
-	}
-}
-
-// readL2 reads from the L2 distributed cache and returns the value and entry.
-func (c *cache) readL2(ctx context.Context, key string, opts EntryOptions) (any, *cacheEntry, error) {
-	if c.l2CB.IsOpen() {
-		return nil, nil, nil // circuit breaker open; treat as miss
-	}
-	pk := c.prefixedKey(key)
-	// apply l2 timeout
-	readCtx := ctx
-	if opts.DistributedCacheHardTimeout > 0 {
-		var cancel context.CancelFunc
-		readCtx, cancel = context.WithTimeout(ctx, opts.DistributedCacheHardTimeout)
-		defer cancel()
-	}
-	data, err := c.l2.Get(readCtx, pk)
-	c.l2CB.Record(err)
-	if err != nil {
-		c.events.emit(EventL2Error{Key: key, Err: err})
-		return nil, nil, err
-	}
-	if data == nil {
-		return nil, nil, nil // l2 miss
-	}
-	value, entry, err := c.unmarshalL2Entry(data)
-	if err != nil {
-		c.logger.Warn("cache: L2 deserialization failed",
-			slog.String("key", pk),
-			slog.String("error", err.Error()),
-		)
-		if opts.ReThrowSerializationExceptions {
-			return nil, nil, err
-		}
-		return nil, nil, nil // treat deserialization failure as miss
-	}
-	return value, entry, nil
-}
-
-// publishBackplane publishes a message to the backplane.
-func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageType, key string, opts EntryOptions) {
-	if c.bp == nil || opts.SkipBackplaneNotifications {
-		return
-	}
-	if c.bpCB.IsOpen() {
-		return // circuit breaker open
-	}
-	msg := backplane.Message{
-		Type:      msgType,
-		CacheName: c.opts.CacheName,
-		Key:       key,
-		SourceID:  c.opts.NodeID,
-	}
-
-	doPublish := func() {
-		err := c.bp.Publish(ctx, msg)
-		c.bpCB.Record(err)
-		if err != nil {
-			c.logger.Warn("cache: backplane publish failed",
-				slog.String("key", key),
-				slog.String("type", fmt.Sprintf("%d", msgType)),
-				slog.String("error", err.Error()),
-			)
-			if !opts.AllowBackgroundBackplaneOperations && opts.ReThrowBackplaneExceptions {
-				// in sync mode with rethrow, the error would be returned.
-				// but publishBackplane is void, errors are logged not returned.
-				// the caller checks these flags in its own err handling
-			}
-		} else {
-			c.events.emit(EventBackplaneSent{Key: key, Type: msgType})
-		}
-	}
-	if opts.AllowBackgroundBackplaneOperations {
-		go doPublish()
-	} else {
-		doPublish()
-	}
-}
-
-// handleBackplaneMessage processes an incoming backplane message.
-func (c *cache) handleBackplaneMessage(msg backplane.Message) {
-	// only process messages for our cache name
-	if msg.CacheName != c.opts.CacheName {
-		return
-	}
-	// ignore msgs from ourselves
-	if msg.SourceID == c.opts.NodeID {
-		return
-	}
-	// user opt out
-	if c.opts.IgnoreIncomingBackplaneNotifications {
-		return
-	}
-	c.events.emit(EventBackplaneReceived{Key: msg.Key, Type: msg.Type})
-
-	switch msg.Type {
-	case backplane.MessageTypeSet:
-		// another node wrote this key, evict from l1 so next read gets fresh from l2
-		pk := c.prefixedKey(msg.Key)
-		if raw, loaded := c.l1.LoadAndDelete(pk); loaded {
-			entry := raw.(*cacheEntry)
-			if len(entry.tags) > 0 {
-				c.tagIdx.remove(pk, entry.tags)
-			}
-		}
-
-	case backplane.MessageTypeDelete:
-		pk := c.prefixedKey(msg.Key)
-		if raw, loaded := c.l1.LoadAndDelete(pk); loaded {
-			entry := raw.(*cacheEntry)
-			if len(entry.tags) > 0 {
-				c.tagIdx.remove(pk, entry.tags)
-			}
-		}
-
-	case backplane.MessageTypeExpire:
-		pk := c.prefixedKey(msg.Key)
-		if raw, ok := c.l1.Get(pk); ok {
-			old := raw.(*cacheEntry)
-			expired := &cacheEntry{
-				value:          old.value,
-				logicalExpiry:  c.clock.Now(),
-				physicalExpiry: old.physicalExpiry,
-				createdAt:      old.createdAt,
-				tags:           old.tags,
-			}
-			c.l1.CompareAndSwap(pk, raw, expired)
-		}
-
-	case backplane.MessageTypeClear:
-		c.l1.Clear()
-		c.tagIdx.clear()
-	}
-}
-
-func (c *cache) attemptAutoRecovery() {
-	if !c.opts.BackplaneAutoRecovery {
-		return
-	}
-	c.logger.Info("cache: backplane auto-recovery, clearing L1...")
-	c.l1.Clear()
-	c.tagIdx.clear()
-}
-
-func (c *cache) marshalL2Entry(value any, opts EntryOptions) ([]byte, error) {
-	// serialize user value with configured serializer
-	innerBytes, err := c.serializer.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("cache: serialize value: %w", err)
-	}
-	now := c.clock.Now()
-
-	return json.Marshal(l2Envelope{
-		V:    innerBytes,
-		LE:   now.Add(opts.Duration).UnixMilli(),
-		PE:   c.computePhysicalExpiry(now, opts).UnixMilli(),
-		Tags: opts.Tags,
-	})
-}
-
-func (c *cache) unmarshalL2Entry(data []byte) (any, *cacheEntry, error) {
-	// deserialize l2Envelope
-	var env l2Envelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		return nil, nil, fmt.Errorf("cache: deserialize envelope: %w", err)
-	}
-	// NOTE: Deserializing into `any` loses concrete type information with
-	// JSON-based serializers (e.g., *MyStruct becomes map[string]interface{}).
-	// L1-only paths store the original Go value directly and are unaffected.
-	// For L2, use a type-aware serializer (e.g., gob) if concrete type
-	// round-tripping is required.
-	var value any
-	if err := c.serializer.Unmarshal(env.V, &value); err != nil {
-		return nil, nil, fmt.Errorf("cache: deserialize value: %w", err)
-	}
-	// reconstruct cache entry
-	return value, &cacheEntry{
-		value:          value,
-		logicalExpiry:  time.UnixMilli(env.LE),
-		physicalExpiry: time.UnixMilli(env.PE),
-		createdAt:      time.UnixMilli(env.LE).Add(-1), // approx
-		tags:           env.Tags,
-	}, nil
 }

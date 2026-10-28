@@ -18,7 +18,7 @@ func TestFailSafe_ReturnsStaleOnError(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial population
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return "fresh", nil
 	})
 	if err != nil {
@@ -48,7 +48,7 @@ func TestFailSafe_ThrottlePreventsRepeatedFactoryCalls(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial population
-	_, err := c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return "fresh", nil
 	})
 	if err != nil {
@@ -59,14 +59,18 @@ func TestFailSafe_ThrottlePreventsRepeatedFactoryCalls(t *testing.T) {
 
 	// First fail-safe activation
 	var factoryCalls atomic.Int32
-	failFactory := func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	failFactory := func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		factoryCalls.Add(1)
 		return nil, errors.New("still down")
 	}
-	c.GetOrSet(ctx, "key", failFactory)
+	if _, err := c.GetOrSet(ctx, "key", failFactory); err != nil {
+		t.Fatal(err)
+	}
 
 	// Second call within throttle window, should not call factory
-	c.GetOrSet(ctx, "key", failFactory)
+	if _, err := c.GetOrSet(ctx, "key", failFactory); err != nil {
+		t.Fatal(err)
+	}
 
 	if factoryCalls.Load() != 1 {
 		t.Fatalf("factory called %d times during throttle, want 1", factoryCalls.Load())
@@ -80,14 +84,17 @@ func TestFailSafe_Disabled_PropagatesError(t *testing.T) {
 	}))
 	ctx := context.Background()
 
-	c.GetOrSet(ctx, "key", func(ctx context.Context, fctx *FactoryExecutionContext) (any, error) {
+	_, err := c.GetOrSet(ctx, "key", func(_ context.Context, _ *FactoryExecutionContext) (any, error) {
 		return "fresh", nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	clk.Advance(2 * time.Minute)
 
 	dbErr := errors.New("db down")
-	_, err := c.GetOrSet(ctx, "key", failingFactory(dbErr))
+	_, err = c.GetOrSet(ctx, "key", failingFactory(dbErr))
 	if !errors.Is(err, dbErr) {
 		t.Fatalf("expected error to propagate, got: %v", err)
 	}
