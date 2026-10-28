@@ -89,9 +89,16 @@ type Options struct {
 	// messages. Useful for read-only replicas or during testing.
 	IgnoreIncomingBackplaneNotifications bool
 
-	// SkipL2OnError: if true (default), L2 errors are logged and swallowed.
-	// cache continues with L1 only. If false, L2 errors propagate to callers
-	// unless overridden by the per-entry ReThrowDistributedCacheExceptions flag.
+	// SkipL2OnError is the cache-wide default for L2 error propagation.
+	// When true (default), [New] leaves
+	// DefaultEntryOptions.ReThrowDistributedCacheExceptions as configured
+	// (false unless you set it), so L2 errors are logged, reported via
+	// [EventL2Error] and swallowed while the cache carries on with L1. When
+	// false, [New] sets DefaultEntryOptions.ReThrowDistributedCacheExceptions
+	// to true, so L2 errors propagate to callers; a per-call [EntryOption]
+	// can still set ReThrowDistributedCacheExceptions back to false.
+	// Serialization errors are governed separately by
+	// [EntryOptions.ReThrowSerializationExceptions].
 	SkipL2OnError bool
 }
 
@@ -180,9 +187,11 @@ type EntryOptions struct {
 	// Zero means wait indefinitely.
 	DistributedCacheHardTimeout time.Duration
 
-	// AllowBackgroundDistributedCacheOperations: when true, L2 writes are
-	// fire-and-forget goroutines. This improves latency but means a write
-	// failure is logged rather than returned to the caller.
+	// AllowBackgroundDistributedCacheOperations: when true, the L2 write of
+	// Set (and of GetOrSet's factory value) runs in a fire-and-forget
+	// goroutine. This improves latency but means a write failure is logged
+	// rather than returned to the caller. L2 reads and the L2 calls of
+	// Delete, DeleteByTag and Clear always run synchronously.
 	// Default: false (blocking, deterministic behaviour).
 	AllowBackgroundDistributedCacheOperations bool
 
@@ -210,12 +219,40 @@ type EntryOptions struct {
 	// value is still returned and the failure is logged.
 	ReThrowBackplaneExceptions bool
 
-	// ReThrowDistributedCacheExceptions: when true and AllowBackgroundDistributedCacheOperations
-	// is false, L2 errors are returned to the caller.
+	// ReThrowDistributedCacheExceptions: when true, an L2 adapter error from
+	// an L2 call that ran synchronously is returned to the caller, wrapped
+	// (use [errors.Is] with the adapter's error). Every L2 error is also
+	// logged and reported via [EventL2Error], with or without this flag.
+	//   - Get returns a failed L2 read as (nil, false, err).
+	//   - GetOrSet returns a failed L2 read without calling the factory and
+	//     without fail-safe fallback. A failed L2 write of the factory's
+	//     value is only logged; the value is still returned.
+	//   - Set returns a failed L2 write unless
+	//     AllowBackgroundDistributedCacheOperations is set (background
+	//     writes are only logged).
+	//   - Delete, DeleteByTag and Clear return a failed L2 call (Clear uses
+	//     the default entry options).
+	// A DistributedCacheHardTimeout expiry is an L2 error. While the L2
+	// circuit breaker is open, Set, Get and GetOrSet skip L2 and report no
+	// error. Local L1 changes are applied before the L2 call and are not
+	// rolled back; mutations still publish to the backplane, and a
+	// rethrown backplane error is joined with the L2 error.
+	// Default: false, or true when [Options.SkipL2OnError] is false.
 	ReThrowDistributedCacheExceptions bool
 
-	// ReThrowSerializationExceptions: when true, serialization errors during L2
-	// reads/writes are returned to the caller. Default: true.
+	// ReThrowSerializationExceptions: when true, a serialization error on
+	// the L2 path is returned to the caller, wrapped (use [errors.Is] or
+	// [errors.As] with the serializer's error). Independent of
+	// ReThrowDistributedCacheExceptions.
+	//   - Write (encoding the value for L2): always logged at Error level.
+	//     Set returns it unless AllowBackgroundDistributedCacheOperations is
+	//     set; the L1 write is kept. GetOrSet only logs it and returns the
+	//     factory's value.
+	//   - Read (decoding an L2 entry): always logged. Get returns it as
+	//     (nil, false, err); GetOrSet returns it without calling the
+	//     factory. When false, the undecodable entry is treated as an L2
+	//     miss, so GetOrSet calls the factory and overwrites it.
+	// Default: true.
 	ReThrowSerializationExceptions bool
 
 	// Priority hints to the L1 eviction policy. Higher priority entries are

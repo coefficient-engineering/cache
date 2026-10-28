@@ -129,6 +129,16 @@ cache.WithDefaultEntryOptions(cache.EntryOptions{
 })
 ```
 
+### `SkipL2OnError`
+
+There is no `With...` helper; set the field with a custom `Option`. When `false`, `New()` sets `ReThrowDistributedCacheExceptions` to `true` in the default entry options, so L2 adapter errors are returned to callers instead of being logged and swallowed. Individual calls can still opt out by setting `ReThrowDistributedCacheExceptions` back to `false`. See [Adding a Distributed L2: Error handling](AddingDistributedL2.md#error-handling).
+
+Default: `true` (L2 errors are logged and swallowed)
+
+```go
+func(o *cache.Options) { o.SkipL2OnError = false }
+```
+
 ### `WithL2CircuitBreaker(threshold int, openDuration time.Duration)`
 
 Configures the L2 circuit breaker. After `threshold` consecutive L2 errors, the circuit opens and all L2 calls are skipped for `openDuration`. A threshold of 0 disables the circuit breaker.

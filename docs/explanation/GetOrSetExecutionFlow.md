@@ -25,6 +25,7 @@ GetOrSet(ctx, key, factory, opts...)
     ├─ [L2 configured AND !SkipL2Read AND !CB open?] ──YES──► Read L2
     │   ├─ HIT (fresh) → promote to L1 → return value
     │   ├─ HIT (stale) → staleEntry = l2Entry
+    │   ├─ ERROR + rethrow → return error (no factory call)
     │   └─ MISS/error → continue
     │
     ├─ Emit EventFactoryCall
@@ -86,7 +87,8 @@ If L2 is configured, `SkipL2Read` is false, and the L2 circuit breaker is not op
 - The circuit breaker records the result.
 - **Fresh hit:** The L2 entry is promoted to L1 (unless `SkipL1Write`). Tags are added to the tag index. The value is returned.
 - **Stale hit:** The L2 entry is logically expired. If `staleEntry` is still nil, this becomes the fail-safe candidate. `EventL2Miss` is emitted.
-- **Miss or error:** Continue to factory.
+- **Error with rethrow:** An adapter error under `ReThrowDistributedCacheExceptions`, or a decode error under `ReThrowSerializationExceptions` (default `true`), is returned to the caller. The factory is not called and fail-safe does not apply.
+- **Miss or swallowed error:** Continue to factory. A swallowed adapter error is logged and reported as `EventL2Error`; a swallowed decode error is logged and counts as a miss.
 
 ### 8. Factory call with fail-safe and timeouts
 
@@ -126,7 +128,7 @@ This:
 1. Computes logical expiry (`now + Duration`) and physical expiry (`now + FailSafeMaxDuration` or `now + Duration` if fail-safe is off).
 2. Creates a `cacheEntry`.
 3. Writes to L1 (unless `SkipL1Write`). Adds tags to the tag index.
-4. Writes to L2 (unless `SkipL2Write` or L2 is nil). Serializes the value, wraps in an `l2Envelope`, and calls `L2Adapter.Set`. This can be synchronous or background depending on `AllowBackgroundDistributedCacheOperations`.
+4. Writes to L2 (unless `SkipL2Write` or L2 is nil). Serializes the value, wraps in an `l2Envelope`, and calls `L2Adapter.Set`. This can be synchronous or background depending on `AllowBackgroundDistributedCacheOperations`. Failures here are logged (and L2 errors reported as `EventL2Error`) but never returned from `GetOrSet`: the factory value is still valid.
 5. Publishes a `MessageTypeSet` to the backplane (unless `SkipBackplaneNotifications` or backplane is nil). Can be synchronous or background.
 
 ### 10. Auto-clone

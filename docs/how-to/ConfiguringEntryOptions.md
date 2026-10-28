@@ -108,11 +108,24 @@ cache.WithSkipL2ReadWhenStale()
 
 ### L2 background operations
 
-**`WithBackgroundL2Ops()`** makes L2 writes fire-and-forget. This reduces latency but means write failures are logged rather than returned.
+**`WithBackgroundL2Ops()`** makes the L2 write of `Set` and `GetOrSet` fire-and-forget. This reduces latency but means write failures are logged rather than returned. L2 reads and the L2 calls of `Delete`, `DeleteByTag` and `Clear` always run synchronously.
 
 ```go
 cache.WithBackgroundL2Ops()
 ```
+
+### L2 and serialization errors
+
+There is no `With...` helper for these; set the fields with an inline `EntryOption`.
+
+- **`ReThrowDistributedCacheExceptions`** (default `false`, or `true` when `Options.SkipL2OnError` is `false`): a failed synchronous L2 call is returned, wrapped, instead of only being logged and reported as `EventL2Error`.
+- **`ReThrowSerializationExceptions`** (default `true`): a failure to encode a value for L2, or to decode an L2 entry, is returned. When off, it is logged and a bad L2 entry counts as a miss.
+
+```go
+func(o *cache.EntryOptions) { o.ReThrowDistributedCacheExceptions = true }
+```
+
+Which methods return which errors is detailed in [Adding a Distributed L2: Error handling](AddingDistributedL2.md#error-handling).
 
 ### Auto-clone
 
