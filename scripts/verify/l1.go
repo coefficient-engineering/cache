@@ -74,7 +74,7 @@ func runFailSafe(ctx context.Context, r *report) error {
 	got, err := cache.GetOrSet(ctx, c, "price:7", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
 		return "", errUpstreamDown
 	}, opts...)
-	r.record(check{Name: "stale-value-returned", OK: err == nil && got == "9.99", Observed: map[string]any{valueKey: got, "error": errString(err)}})
+	r.record(check{Name: "stale-value-returned", OK: err == nil && got == "9.99", Observed: map[string]any{valueKey: got, errorKey: errString(err)}})
 	r.record(check{Name: "failsafe-event-emitted", OK: events.count("EventFailSafeActivated") == 1, Observed: events.count("EventFailSafeActivated")})
 
 	_, err = cache.GetOrSet(ctx, c, "price:never-cached", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
