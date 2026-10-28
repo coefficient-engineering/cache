@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coefficient-engineering/cache"
+	l2memory "github.com/coefficient-engineering/cache/adapters/l2/memory"
+	jsonserializer "github.com/coefficient-engineering/cache/adapters/serializer/json"
 )
 
 const (
@@ -91,6 +94,57 @@ func runSharedFactoryEvents(ctx context.Context, r *report) error {
 	mu.Lock()
 	defer mu.Unlock()
 	r.record(check{Name: "factory-success-sharing", OK: unshared == 1 && shared == callers-1, Observed: map[string]int{"shared": shared, "unshared": unshared}})
+	return nil
+}
+
+// runSkipL2ReadWhenStale proves a stale L1 entry can bypass a newer L2 value.
+func runSkipL2ReadWhenStale(ctx context.Context, r *report) error {
+	for _, skipL2 := range []bool{false, true} {
+		adapter := l2memory.New()
+		opts := []cache.Option{
+			cache.WithL2(adapter),
+			cache.WithSerializer(&jsonserializer.Serializer{}),
+		}
+		staleCache, err := cache.New(opts...)
+		if err != nil {
+			return err
+		}
+		freshCache, err := cache.New(opts...)
+		if err != nil {
+			_ = staleCache.Close()
+			return err
+		}
+		if err := staleCache.Set(ctx, "key", "stale", cache.WithDuration(shortDuration)); err != nil {
+			_ = staleCache.Close()
+			_ = freshCache.Close()
+			return err
+		}
+		if err := freshCache.Set(ctx, "key", "fresh", cache.WithDuration(time.Minute)); err != nil {
+			_ = staleCache.Close()
+			_ = freshCache.Close()
+			return err
+		}
+		time.Sleep(2 * shortDuration)
+		events := &eventLog{}
+		events.attach(staleCache)
+		var calls atomic.Int32
+		entryOpts := []cache.EntryOption{cache.WithDuration(time.Minute)}
+		if skipL2 {
+			entryOpts = append(entryOpts, cache.WithSkipL2ReadWhenStale())
+		}
+		got, callErr := cache.GetOrSet(ctx, staleCache, "key", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+			calls.Add(1)
+			return "factory", nil
+		}, entryOpts...)
+		l2Hits := events.count("EventL2Hit")
+		wantValue, wantCalls, wantHits := "fresh", int32(0), 1
+		if skipL2 {
+			wantValue, wantCalls, wantHits = "factory", 1, 0
+		}
+		r.record(check{Name: fmt.Sprintf("skip-l2-on-stale-%t", skipL2), OK: callErr == nil && got == wantValue && calls.Load() == wantCalls && l2Hits == wantHits, Observed: map[string]any{"value": got, "factory_calls": calls.Load(), "l2_hits": l2Hits}})
+		_ = staleCache.Close()
+		_ = freshCache.Close()
+	}
 	return nil
 }
 

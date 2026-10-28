@@ -442,15 +442,17 @@ func (c *cache) loadOrCreate(
 		}
 	}
 
-	// L2 read
-	l2Value, l2Stale, l2Hit := c.loadFromL2(ctx, key, now, *eo)
-	if l2Hit {
-		return getOrSetResult{value: l2Value}, nil
+	// A stale L1 value is the only source that activates this option. Stale
+	// L2 values are discovered only by reading L2 and remain valid fallbacks.
+	if staleEntry == nil || !eo.SkipL2ReadWhenStale {
+		l2Value, l2Stale, l2Hit := c.loadFromL2(ctx, key, now, *eo)
+		if l2Hit {
+			return getOrSetResult{value: l2Value}, nil
+		}
+		if staleEntry == nil {
+			staleEntry = l2Stale
+		}
 	}
-	if staleEntry == nil {
-		staleEntry = l2Stale
-	}
-
 	value, err := c.callFactory(ctx, key, eo, staleEntry, factory)
 	if err != nil {
 		return getOrSetResult{}, err

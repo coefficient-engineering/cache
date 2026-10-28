@@ -2,9 +2,13 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
+
+	l2memory "github.com/coefficient-engineering/cache/adapters/l2/memory"
+	jsonserializer "github.com/coefficient-engineering/cache/adapters/serializer/json"
 )
 
 func TestGetOrSetFactorySuccessSharedEvents(t *testing.T) {
@@ -47,6 +51,62 @@ func TestGetOrSetFactorySuccessSharedEvents(t *testing.T) {
 	defer mu.Unlock()
 	if shared != callers-1 || unshared != 1 {
 		t.Fatalf("factory success events: Shared=true %d, false %d; want %d and 1", shared, unshared, callers-1)
+	}
+}
+
+func TestGetOrSetSkipL2ReadWhenStale(t *testing.T) {
+	for _, skipL2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("skip-l2-%t", skipL2), func(t *testing.T) {
+			adapter := l2memory.New()
+			opts := []Option{
+				WithL2(adapter),
+				WithSerializer(&jsonserializer.Serializer{}),
+			}
+			staleCache, err := New(opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer staleCache.Close()
+			freshCache, err := New(opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer freshCache.Close()
+
+			if err := staleCache.Set(context.Background(), "key", "stale", WithDuration(30*time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			if err := freshCache.Set(context.Background(), "key", "fresh", WithDuration(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(40 * time.Millisecond)
+
+			l2Hits := 0
+			staleCache.Events().On(func(event Event) {
+				if _, ok := event.(EventL2Hit); ok {
+					l2Hits++
+				}
+			})
+			var factoryCalls int
+			entryOpts := []EntryOption{WithDuration(time.Minute)}
+			if skipL2 {
+				entryOpts = append(entryOpts, WithSkipL2ReadWhenStale())
+			}
+			got, err := staleCache.GetOrSet(context.Background(), "key", func(context.Context, *FactoryExecutionContext) (any, error) {
+				factoryCalls++
+				return "factory", nil
+			}, entryOpts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if skipL2 {
+				if got != "factory" || factoryCalls != 1 || l2Hits != 0 {
+					t.Fatalf("got %v, factory calls %d, L2 hits %d; want factory/1/0", got, factoryCalls, l2Hits)
+				}
+			} else if got != "fresh" || factoryCalls != 0 || l2Hits != 1 {
+				t.Fatalf("got %v, factory calls %d, L2 hits %d; want fresh/0/1", got, factoryCalls, l2Hits)
+			}
+		})
 	}
 }
 
