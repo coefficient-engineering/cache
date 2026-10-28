@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,15 +87,13 @@ func runBreakerEvents(ctx context.Context, r *report) error {
 		return err
 	}
 
+	_, found, getErr := c.Get(ctx, "breaker")
+	r.record(check{Name: "backplane-recovery-clears-l1", OK: getErr == nil && !found, Observed: map[string]any{foundKey: found, errorKey: errString(getErr)}})
 	mu.Lock()
 	defer mu.Unlock()
-	want := []bool{true, false}
-	l2OK := len(l2Events) == len(want) && l2Events[0] && !l2Events[1]
-	bpOK := len(bpEvents) == len(want) && bpEvents[0] && !bpEvents[1]
+	l2OK := slices.Equal(l2Events, []bool{true, false})
+	bpOK := slices.Equal(bpEvents, []bool{true, false})
 	r.record(check{Name: "l2-breaker-transitions", OK: l2OK, Observed: l2Events})
 	r.record(check{Name: "backplane-breaker-transitions", OK: bpOK, Observed: bpEvents})
-	if !l2OK || !bpOK {
-		return errors.New("circuit breaker transitions not observed")
-	}
 	return nil
 }

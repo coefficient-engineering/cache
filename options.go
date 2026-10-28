@@ -77,12 +77,12 @@ type Options struct {
 	// reconnects after an outage. Default: true.
 	BackplaneAutoRecovery bool
 
-	// AutoRecoveryMaxRetries is the maximum number of recovery attempts.
-	// Default: 10.
+	// AutoRecoveryMaxRetries is retained for source compatibility.
+	// Deprecated: has no effect; recovery clears L1 synchronously and cannot fail.
 	AutoRecoveryMaxRetries int
 
-	// AutoRecoveryDelay is the pause between recovery attempts.
-	// Default: 2s.
+	// AutoRecoveryDelay is retained for source compatibility.
+	// Deprecated: has no effect; recovery clears L1 synchronously and cannot fail.
 	AutoRecoveryDelay time.Duration
 
 	// IgnoreIncomingBackplaneNotifications disables acting on received backplane

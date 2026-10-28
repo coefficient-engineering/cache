@@ -21,7 +21,6 @@ type circuitBreaker struct {
 	openDuration  time.Duration
 	openedAt      time.Time
 	onStateChange func(open bool)
-	onRecovery    func()
 }
 
 func newCircuitBreaker(threshold int, openDuration time.Duration) *circuitBreaker {
@@ -50,12 +49,7 @@ func (cb *circuitBreaker) Record(err error) {
 	cb.mu.Lock()
 	changed, open := cb.recordLocked(err)
 	callback := cb.onStateChange
-	recovery := cb.onRecovery
 	cb.mu.Unlock()
-
-	if changed && !open && recovery != nil {
-		go recovery()
-	}
 
 	if changed && callback != nil {
 		callback(open)

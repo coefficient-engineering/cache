@@ -23,6 +23,7 @@ import (
 const (
 	valueKey = "value"
 	errorKey = "error"
+	foundKey = "found"
 )
 
 // check is one observed result.

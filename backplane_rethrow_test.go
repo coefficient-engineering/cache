@@ -132,6 +132,9 @@ func TestBackplaneCircuitBreakerEmitsTransitions(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	_ = c.Set(context.Background(), "breaker", "value")
 
+	if _, ok, err := c.Get(context.Background(), "breaker"); err != nil || ok {
+		t.Fatalf("Get after recovery = (ok=%v, err=%v), want miss", ok, err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(transitions) != 2 || !transitions[0] || transitions[1] {
