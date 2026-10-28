@@ -6,7 +6,7 @@ Each step produces a runnable program. We start simple and add features incremen
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.26 or later
 - A new or existing Go module
 
 Install the core library:

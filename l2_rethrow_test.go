@@ -210,8 +210,7 @@ func TestSet_ReturnsSerializationErrorByDefault(t *testing.T) {
 	ctx := context.Background()
 
 	err := c.Set(ctx, "k", make(chan int))
-	var unsupported *json.UnsupportedTypeError
-	if !errors.As(err, &unsupported) {
+	if _, ok := errors.AsType[*json.UnsupportedTypeError](err); !ok {
 		t.Fatalf("Set error = %v, want a *json.UnsupportedTypeError", err)
 	}
 	if _, ok, _ := c.Get(ctx, "k", WithSkipL2()); !ok {

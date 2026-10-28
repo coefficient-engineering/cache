@@ -23,7 +23,7 @@ A hybrid L1+L2 cache for Go, ported from [FusionCache](https://github.com/ZiggyC
 
 ## Requirements
 
-Go 1.21 or later.
+Go 1.26 or later.
 
 ---
 
@@ -31,9 +31,9 @@ Go 1.21 or later.
 
 | module                                                              | version |
 | ------------------------------------------------------------------- | ------- |
-| `github.com/coefficient-engineering/cache`                          | v0.3.0  |
-| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v0.3.0  |
-| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v0.3.0  |
+| `github.com/coefficient-engineering/cache`                          | v0.3.1  |
+| `github.com/coefficient-engineering/cache/adapters/l2/redis`        | v0.3.1  |
+| `github.com/coefficient-engineering/cache/adapters/backplane/redis` | v0.3.1  |
 
 ---
 

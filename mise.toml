@@ -1,5 +1,5 @@
 [tools]
-go = "1.25.14"
+go = "1.26.10"
 golangci-lint = "2.15.0"
 lefthook = "2.2.2"
 gitleaks = "8.30.1"

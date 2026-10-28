@@ -95,4 +95,4 @@ A service that only needs L1 caching does not pull in Redis, Memcached, or any o
 
 ## Minimum Go version
 
-Go 1.21. This provides `log/slog` (structured logging in the standard library), `min()`/`max()` builtins, and a stable generics implementation.
+Go 1.26, required by `golang.org/x/sync` v0.24.
