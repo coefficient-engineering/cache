@@ -4,7 +4,8 @@
 // Usage: go run ./scripts/verify <scenario>
 //
 // Scenarios: stampede, failsafe, tags (L1 only); multinode, backplane-rethrow,
-// l2-rethrow, expire-l2 (need REDIS_ADDR).
+// l2-rethrow, expire-l2,
+// l2-soft-timeout (need REDIS_ADDR).
 // Exit status is 0 only when every check in the scenario holds.
 package main
 
@@ -84,6 +85,7 @@ var scenarios = map[string]func(context.Context, *report) error{
 	"backplane-rethrow": runBackplaneRethrow,
 	"l2-rethrow":        runL2Rethrow,
 	"expire-l2":         runExpireL2,
+	"l2-soft-timeout":   runL2SoftTimeout,
 	"stampede":          runStampede,
 	"failsafe":          runFailSafe,
 	"tags":              runTags,
