@@ -14,13 +14,13 @@ const (
 )
 
 type circuitBreaker struct {
-	mu           sync.Mutex
-	state        cbState
-	failures     int
-	threshold    int
-	openDuration time.Duration
-	openedAt     time.Time
-	onRecovery   func()
+	mu            sync.Mutex
+	state         cbState
+	failures      int
+	threshold     int
+	openDuration  time.Duration
+	openedAt      time.Time
+	onStateChange func(open bool)
 }
 
 func newCircuitBreaker(threshold int, openDuration time.Duration) *circuitBreaker {
@@ -35,7 +35,6 @@ func (cb *circuitBreaker) IsOpen() bool {
 	defer cb.mu.Unlock()
 
 	if cb.state == cbOpen && time.Since(cb.openedAt) > cb.openDuration {
-		// transition to half open
 		cb.state = cbHalfOpen
 		return false
 	}
@@ -46,31 +45,33 @@ func (cb *circuitBreaker) Record(err error) {
 	if cb.threshold == 0 {
 		return // disabled
 	}
+
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	changed, open := cb.recordLocked(err)
+	callback := cb.onStateChange
+	cb.mu.Unlock()
 
-	if err == nil {
-		// success: close circuit & reset counter
-		wasOpen := cb.state == cbOpen || cb.state == cbHalfOpen
-		if wasOpen {
-			cb.state = cbClosed
-			if cb.onRecovery != nil {
-				go cb.onRecovery()
-			}
+	if changed && callback != nil {
+		callback(open)
+	}
+}
+
+func (cb *circuitBreaker) recordLocked(err error) (changed, open bool) {
+	switch {
+	case err == nil && cb.state == cbHalfOpen:
+		cb.state = cbClosed
+		cb.failures = 0
+		return true, false
+	case err == nil:
+		cb.failures = 0
+		return false, false
+	default:
+		cb.failures++
+		if cb.state == cbHalfOpen || (cb.state == cbClosed && cb.failures >= cb.threshold) {
+			cb.state = cbOpen
+			cb.openedAt = time.Now()
+			return true, true
 		}
-		cb.failures = 0 // always reset on success
-		return
-	}
-
-	// failure
-	cb.failures++
-	if cb.failures >= cb.threshold && cb.state == cbClosed {
-		cb.state = cbOpen
-		cb.openedAt = time.Now()
-	}
-
-	if cb.state == cbHalfOpen {
-		cb.state = cbOpen
-		cb.openedAt = time.Now()
+		return false, false
 	}
 }

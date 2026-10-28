@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coefficient-engineering/cache"
+	l2memory "github.com/coefficient-engineering/cache/adapters/l2/memory"
+	jsonserializer "github.com/coefficient-engineering/cache/adapters/serializer/json"
 )
 
 const (
@@ -52,6 +55,127 @@ func runStampede(ctx context.Context, r *report) error {
 	}
 	r.record(check{Name: "factory-called-once", OK: calls.Load() == 1, Observed: map[string]any{"callers": concurrentCallers, "factory_calls": calls.Load()}})
 	r.record(check{Name: "all-callers-got-value", OK: allSame, Observed: results[0]})
+	return nil
+}
+
+// runSharedFactoryEvents proves singleflight waiters are marked Shared.
+func runSharedFactoryEvents(ctx context.Context, r *report) error {
+	c, err := cache.New()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	const callers = 8
+	var mu sync.Mutex
+	shared, unshared := 0, 0
+	c.Events().On(func(e cache.Event) {
+		event, ok := e.(cache.EventFactorySuccess)
+		if !ok {
+			return
+		}
+		mu.Lock()
+		if event.Shared {
+			shared++
+		} else {
+			unshared++
+		}
+		mu.Unlock()
+	})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() {
+			_, _ = cache.GetOrSet(ctx, c, "shared-event", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+				time.Sleep(slowFactory)
+				return "shared-event-value", nil
+			})
+		})
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	r.record(check{Name: "factory-success-sharing", OK: unshared == 1 && shared == callers-1, Observed: map[string]int{"shared": shared, "unshared": unshared}})
+	return nil
+}
+
+// runSkipL2ReadWhenStale proves a stale L1 entry can bypass a newer L2 value.
+func runSkipL2ReadWhenStale(ctx context.Context, r *report) error {
+	for _, skipL2 := range []bool{false, true} {
+		adapter := l2memory.New()
+		opts := []cache.Option{
+			cache.WithL2(adapter),
+			cache.WithSerializer(&jsonserializer.Serializer{}),
+		}
+		staleCache, err := cache.New(opts...)
+		if err != nil {
+			return err
+		}
+		freshCache, err := cache.New(opts...)
+		if err != nil {
+			_ = staleCache.Close()
+			return err
+		}
+		if err := staleCache.Set(ctx, "key", "stale", cache.WithDuration(shortDuration)); err != nil {
+			_ = staleCache.Close()
+			_ = freshCache.Close()
+			return err
+		}
+		if err := freshCache.Set(ctx, "key", "fresh", cache.WithDuration(time.Minute)); err != nil {
+			_ = staleCache.Close()
+			_ = freshCache.Close()
+			return err
+		}
+		time.Sleep(2 * shortDuration)
+		events := &eventLog{}
+		events.attach(staleCache)
+		var calls atomic.Int32
+		entryOpts := []cache.EntryOption{cache.WithDuration(time.Minute)}
+		if skipL2 {
+			entryOpts = append(entryOpts, cache.WithSkipL2ReadWhenStale())
+		}
+		got, callErr := cache.GetOrSet(ctx, staleCache, "key", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+			calls.Add(1)
+			return "factory", nil
+		}, entryOpts...)
+		l2Hits := events.count("EventL2Hit")
+		wantValue, wantCalls, wantHits := "fresh", int32(0), 1
+		if skipL2 {
+			wantValue, wantCalls, wantHits = "factory", 1, 0
+		}
+		r.record(check{Name: fmt.Sprintf("skip-l2-on-stale-%t", skipL2), OK: callErr == nil && got == wantValue && calls.Load() == wantCalls && l2Hits == wantHits, Observed: map[string]any{valueKey: got, "factory_calls": calls.Load(), "l2_hits": l2Hits}})
+		_ = staleCache.Close()
+		_ = freshCache.Close()
+	}
+	return nil
+}
+
+// runLockTimeout proves a timed-out caller runs its miss path without the lock.
+func runLockTimeout(ctx context.Context, r *report) error {
+	c, err := cache.New()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := cache.GetOrSet(ctx, c, "lock-timeout", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+			close(firstStarted)
+			<-releaseFirst
+			return "first", nil
+		})
+		firstDone <- err
+	}()
+	<-firstStarted
+	started := time.Now()
+	got, secondErr := cache.GetOrSet(ctx, c, "lock-timeout", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+		return "second", nil
+	}, cache.WithLockTimeout(shortDuration))
+	elapsed := time.Since(started)
+	close(releaseFirst)
+	firstErr := <-firstDone
+	ok := secondErr == nil && firstErr == nil && got == "second" && elapsed < 300*time.Millisecond
+	r.record(check{Name: "timeout-proceeds-without-lock", OK: ok, Observed: map[string]any{valueKey: got, errorKey: errString(secondErr), "elapsed_ms": elapsed.Milliseconds()}})
 	return nil
 }
 

@@ -77,12 +77,12 @@ type Options struct {
 	// reconnects after an outage. Default: true.
 	BackplaneAutoRecovery bool
 
-	// AutoRecoveryMaxRetries is the maximum number of recovery attempts.
-	// Default: 10.
+	// AutoRecoveryMaxRetries is retained for source compatibility.
+	// Deprecated: has no effect; recovery clears L1 synchronously and cannot fail.
 	AutoRecoveryMaxRetries int
 
-	// AutoRecoveryDelay is the pause between recovery attempts.
-	// Default: 2s.
+	// AutoRecoveryDelay is retained for source compatibility.
+	// Deprecated: has no effect; recovery clears L1 synchronously and cannot fail.
 	AutoRecoveryDelay time.Duration
 
 	// IgnoreIncomingBackplaneNotifications disables acting on received backplane
@@ -262,8 +262,8 @@ type EntryOptions struct {
 	// Default: true.
 	ReThrowSerializationExceptions bool
 
-	// Priority hints to the L1 eviction policy. Higher priority entries are
-	// evicted last under memory pressure. Default: PriorityNormal.
+	// Priority is retained for source compatibility.
+	// Deprecated: not passed to L1 adapters; has no effect.
 	Priority EvictionPriority
 
 	// Size is an arbitrary weight unit used by L1 when a SizeLimit is configured
@@ -305,17 +305,16 @@ type EntryOptions struct {
 	EnableAutoClone bool
 }
 
-// EvictionPriority hints to the L1 eviction policy.
-// Higher priority entries are evicted last under memory pressure.
-// Unbounded L1 adapters (like the default [sync.Map] adapter) ignore this.
+// EvictionPriority is retained for source compatibility.
+// Deprecated: not passed to L1 adapters; has no effect.
 type EvictionPriority int
 
-// Eviction priority constants for the L1 cache.
+// Priority constants are retained for source compatibility and have no effect.
 const (
-	PriorityLow         EvictionPriority = -1 // evict first
-	PriorityNormal      EvictionPriority = 0  // default
-	PriorityHigh        EvictionPriority = 1  // evict last
-	PriorityNeverRemove EvictionPriority = 2  // never evict
+	PriorityLow         EvictionPriority = -1
+	PriorityNormal      EvictionPriority = 0
+	PriorityHigh        EvictionPriority = 1
+	PriorityNeverRemove EvictionPriority = 2
 )
 
 // EntryOption modifies an [EntryOptions] value. Compose multiple options
@@ -383,8 +382,8 @@ func WithTags(tags ...string) EntryOption {
 	}
 }
 
-// WithPriority sets [EntryOptions.Priority], an eviction hint for bounded
-// L1 adapters.
+// WithPriority sets [EntryOptions.Priority].
+// Deprecated: not passed to L1 adapters; has no effect.
 func WithPriority(p EvictionPriority) EntryOption {
 	return func(o *EntryOptions) { o.Priority = p }
 }
@@ -428,7 +427,7 @@ func WithAutoClone() EntryOption {
 }
 
 // WithLockTimeout sets [EntryOptions.LockTimeout], the maximum time to wait
-// for the stampede protection lock. Returns [ErrLockTimeout] on timeout.
+// for the stampede protection lock before proceeding without it.
 func WithLockTimeout(d time.Duration) EntryOption {
 	return func(o *EntryOptions) { o.LockTimeout = d }
 }

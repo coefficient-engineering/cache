@@ -12,14 +12,3 @@ import "errors"
 //	    // handle timeout
 //	}
 var ErrFactoryHardTimeout = errors.New("cache: factory hard timeout")
-
-// ErrLockTimeout is returned when [EntryOptions.LockTimeout] elapses before
-// the stampede protection lock is acquired. The caller may proceed without
-// the lock (best-effort).
-//
-// Use [errors.Is] to check:
-//
-//	if errors.Is(err, cache.ErrLockTimeout) {
-//	    // handle lock timeout
-//	}
-var ErrLockTimeout = errors.New("cache: stampede lock timeout")

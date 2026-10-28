@@ -40,7 +40,15 @@ func newCache(opts *Options) (*cache, error) {
 		opts.BackplaneCircuitBreakerThreshold,
 		opts.BackplaneCircuitBreakerDuration,
 	)
-	c.bpCB.onRecovery = c.attemptAutoRecovery
+	c.l2CB.onStateChange = func(open bool) {
+		c.events.emit(EventL2CircuitBreakerStateChange{Open: open})
+	}
+	c.bpCB.onStateChange = func(open bool) {
+		c.events.emit(EventBackplaneCircuitBreakerStateChange{Open: open})
+		if !open && opts.BackplaneAutoRecovery {
+			c.attemptAutoRecovery()
+		}
+	}
 	// listen for bp invalidation messages
 	if c.bp != nil {
 		cancel, err := c.bp.Subscribe(c.handleBackplaneMessage)
@@ -127,6 +135,17 @@ func WithBackplaneCircuitBreaker(threshold int, openDuration time.Duration) Opti
 	return func(o *Options) {
 		o.BackplaneCircuitBreakerThreshold = threshold
 		o.BackplaneCircuitBreakerDuration = openDuration
+	}
+}
+
+// WithAutoRecovery enables backplane recovery and configures legacy settings.
+// AutoRecoveryMaxRetries and AutoRecoveryDelay are retained for compatibility
+// but have no effect.
+func WithAutoRecovery(maxRetries int, delay time.Duration) Option {
+	return func(o *Options) {
+		o.BackplaneAutoRecovery = true
+		o.AutoRecoveryMaxRetries = maxRetries
+		o.AutoRecoveryDelay = delay
 	}
 }
 

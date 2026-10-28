@@ -22,13 +22,13 @@ Only one factory call is made per key at any given time.
 The `stampedeGroup` type in `stampede.go` wraps `singleflight.Group` with two methods:
 
 - `Do(key, fn)`: Standard deduplication. Blocks until the in-flight call completes.
-- `DoWithTimeout(key, timeout, fn)`: Like `Do`, but the caller gives up waiting after `timeout` and receives `ErrLockTimeout`. The in-flight factory continues running. When it eventually completes, its result is stored in the cache, benefiting future callers.
+- `DoWithTimeout(key, timeout, fn)`: Like `Do`, but after `timeout` the caller executes `fn` without the lock; the original singleflight call continues independently.
 
 ## Lock timeout
 
-The `LockTimeout` entry option controls how long a goroutine waits for the singleflight lock. If the timeout elapses, the goroutine receives `ErrLockTimeout` instead of waiting indefinitely. This prevents starvation when a factory call is unusually slow.
+If the timeout elapses, the caller proceeds without the lock and runs the same miss path independently. This can produce a second concurrent factory call, but the original call is unaffected and continues. The caller returns its own path's result rather than a lock-timeout error.
 
-Setting `LockTimeout` trades a small risk of duplicate factory calls against guaranteed bounded latency. In most cases, leaving it at the default (0, meaning wait indefinitely) is correct.
+Setting `LockTimeout` trades a small risk of duplicate factory calls against bounded waiting for the lock. In most cases, leaving it at the default (0, meaning wait indefinitely) is correct.
 
 ## Re-check after acquiring the lock
 

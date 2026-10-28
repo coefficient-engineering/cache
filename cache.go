@@ -412,7 +412,9 @@ func (c *cache) GetOrSet(
 	}
 	c.events.emit(EventCacheMiss{Key: key})
 
+	var executed bool
 	doFn := func() (any, error) {
+		executed = true
 		return c.loadOrCreate(ctx, key, &eo, staleEntry, factory)
 	}
 
@@ -427,7 +429,19 @@ func (c *cache) GetOrSet(
 	if err != nil {
 		return nil, err
 	}
-	return c.maybeAutoClone(result, eo)
+	outcome, ok := result.(getOrSetResult)
+	if !ok {
+		return nil, fmt.Errorf("cache: unexpected singleflight result %T", result)
+	}
+	if !executed && outcome.factoryProduced {
+		c.events.emit(EventFactorySuccess{Key: key, Shared: true})
+	}
+	return c.maybeAutoClone(outcome.value, eo)
+}
+
+type getOrSetResult struct {
+	value           any
+	factoryProduced bool
 }
 
 // loadOrCreate is the stampede-protected miss path of GetOrSet: it
@@ -440,35 +454,56 @@ func (c *cache) loadOrCreate(
 	eo *EntryOptions,
 	staleEntry *cacheEntry,
 	factory FactoryFunc,
-) (any, error) {
+) (getOrSetResult, error) {
 	pk := c.prefixedKey(key)
 	now := c.clock.Now()
 
 	// recheck L1 in case another goroutine populated it while we waited
 	if !eo.SkipL1Read {
 		if entry, ok := c.l1Entry(pk); ok && !entry.IsLogicallyExpired(now) {
-			return entry.value, nil
+			return getOrSetResult{value: entry.value}, nil
 		}
 	}
 
-	// L2 read
-	// The L2 soft timeout only applies when a fail-safe fallback exists.
-	var l2SoftTimeout time.Duration
-	if eo.IsFailSafeEnabled && staleEntry != nil {
-		l2SoftTimeout = eo.DistributedCacheSoftTimeout
-	}
-	l2Value, l2Stale, l2Hit, err := c.loadFromL2(ctx, key, now, *eo, l2SoftTimeout)
+	l2Value, staleEntry, l2Hit, err := c.readL2ForGetOrSet(ctx, key, now, *eo, staleEntry)
 	if err != nil {
-		return nil, err
+		return getOrSetResult{}, err
 	}
 	if l2Hit {
-		return l2Value, nil
+		return getOrSetResult{value: l2Value}, nil
 	}
+	value, err := c.callFactory(ctx, key, eo, staleEntry, factory)
+	if err != nil {
+		return getOrSetResult{}, err
+	}
+	return getOrSetResult{value: value, factoryProduced: true}, nil
+}
+
+// readL2ForGetOrSet is GetOrSet's L2 step. It returns a fresh L2 hit, or
+// the fail-safe fallback to use: staleEntry (stale L1) when set, otherwise
+// a stale L2 entry. A stale L1 value is the only source that activates
+// SkipL2ReadWhenStale (then L2 is not read and no soft timeout applies);
+// stale L2 values are discovered only by reading L2. The L2 soft timeout
+// only applies when a fail-safe fallback already exists.
+func (c *cache) readL2ForGetOrSet(
+	ctx context.Context,
+	key string,
+	now time.Time,
+	eo EntryOptions,
+	staleEntry *cacheEntry,
+) (value any, stale *cacheEntry, hit bool, err error) {
+	if staleEntry != nil && eo.SkipL2ReadWhenStale {
+		return nil, staleEntry, false, nil
+	}
+	var softTimeout time.Duration
+	if eo.IsFailSafeEnabled && staleEntry != nil {
+		softTimeout = eo.DistributedCacheSoftTimeout
+	}
+	value, l2Stale, hit, err := c.loadFromL2(ctx, key, now, eo, softTimeout)
 	if staleEntry == nil {
 		staleEntry = l2Stale
 	}
-
-	return c.callFactory(ctx, key, eo, staleEntry, factory)
+	return value, staleEntry, hit, err
 }
 
 // callFactory runs factory with fail-safe and timeout handling and stores

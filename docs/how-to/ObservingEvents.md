@@ -71,7 +71,7 @@ c.Events().On(func(e cache.Event) {
 | `EventCacheHit`                           | `Key string`, `IsStale bool`               | L1 hit (fresh or stale with `AllowStaleOnReadOnly`) |
 | `EventCacheMiss`                          | `Key string`                               | No fresh entry in L1                                |
 | `EventFactoryCall`                        | `Key string`                               | Factory is about to be called                       |
-| `EventFactorySuccess`                     | `Key string`, `Shared bool`                | Factory returned successfully                       |
+| `EventFactorySuccess`                     | `Key string`, `Shared bool`                | Successful factory result; `Shared` is true only for concurrent callers receiving that factory result through singleflight |
 | `EventFactoryError`                       | `Key string`, `Err error`                  | Factory returned an error                           |
 | `EventSoftTimeoutActivated`               | `Key string`                               | Soft timeout fired, returning stale value           |
 | `EventHardTimeoutActivated`               | `Key string`                               | Hard timeout fired                                  |
@@ -81,10 +81,10 @@ c.Events().On(func(e cache.Event) {
 | `EventL2Hit`                              | `Key string`                               | Fresh value found in L2                             |
 | `EventL2Miss`                             | `Key string`                               | No value (or only stale value) in L2                |
 | `EventL2Error`                            | `Key string`, `Err error`                  | L2 operation failed                                 |
-| `EventL2CircuitBreakerStateChange`        | `Open bool`                                | L2 circuit breaker state changed                    |
+| `EventL2CircuitBreakerStateChange`        | `Open bool`                                | L2 breaker transitions open or returns closed after a successful probe |
 | `EventBackplaneSent`                      | `Key string`, `Type backplane.MessageType` | Message published to backplane                      |
 | `EventBackplaneReceived`                  | `Key string`, `Type backplane.MessageType` | Message received from backplane                     |
-| `EventBackplaneCircuitBreakerStateChange` | `Open bool`                                | Backplane circuit breaker state changed             |
+| `EventBackplaneCircuitBreakerStateChange` | `Open bool`                                | Backplane breaker transitions open or returns closed after a successful probe |
 
 ## Multiple handlers
 

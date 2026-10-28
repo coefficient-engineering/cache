@@ -38,8 +38,8 @@ type (
 	// EventFactoryCall is emitted when the factory is about to be called.
 	EventFactoryCall struct{ Key string }
 	// EventFactorySuccess is emitted when the factory returns successfully.
-	// Shared indicates the result came from singleflight (another
-	// goroutine's call).
+	// Shared is true only for callers that receive another caller's successful
+	// factory result through singleflight.
 	EventFactorySuccess struct {
 		Key    string
 		Shared bool

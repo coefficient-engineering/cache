@@ -56,8 +56,8 @@ When disabled, `IsOpen()` always returns `false` and `Record()` is a no-op.
 
 The cache emits events when circuit breaker state changes:
 
-- `EventL2CircuitBreakerStateChange{Open: true}` when the L2 circuit opens
-- `EventBackplaneCircuitBreakerStateChange{Open: true}` when the backplane circuit opens
+- `EventL2CircuitBreakerStateChange{Open: true}` once when the L2 breaker opens and `{Open: false}` once when a successful half-open probe closes it.
+- `EventBackplaneCircuitBreakerStateChange{Open: true}` once when the backplane breaker opens and `{Open: false}` once when a successful half-open probe closes it.
 
 Subscribe to these via `c.Events().On(...)`. See [Observing Events](ObservingEvents.md).
 
