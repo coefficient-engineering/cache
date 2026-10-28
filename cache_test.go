@@ -110,6 +110,40 @@ func TestGetOrSetSkipL2ReadWhenStale(t *testing.T) {
 	}
 }
 
+func TestGetOrSetLockTimeoutProceedsWithoutLock(t *testing.T) {
+	c, _ := newTestCache(t)
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := c.GetOrSet(context.Background(), "lock-timeout", func(context.Context, *FactoryExecutionContext) (any, error) {
+			close(firstStarted)
+			<-releaseFirst
+			return "first", nil
+		})
+		firstDone <- err
+	}()
+	<-firstStarted
+
+	started := time.Now()
+	got, err := c.GetOrSet(context.Background(), "lock-timeout", func(context.Context, *FactoryExecutionContext) (any, error) {
+		return "second", nil
+	}, WithLockTimeout(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("GetOrSet with lock timeout: %v", err)
+	}
+	if got != "second" {
+		t.Fatalf("got %v, want second", got)
+	}
+	if elapsed := time.Since(started); elapsed >= 300*time.Millisecond {
+		t.Fatalf("caller waited %s for first factory; want to proceed without its lock", elapsed)
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first GetOrSet: %v", err)
+	}
+}
+
 func TestGetOrSet_BasicHitMiss(t *testing.T) {
 	c, _ := newTestCache(t)
 	ctx := context.Background()

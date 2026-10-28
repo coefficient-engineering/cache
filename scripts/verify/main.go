@@ -20,7 +20,10 @@ import (
 )
 
 // valueKey labels the observed cached value in check output.
-const valueKey = "value"
+const (
+	valueKey = "value"
+	errorKey = "error"
+)
 
 // check is one observed result.
 type check struct {
@@ -80,6 +83,7 @@ var scenarios = map[string]func(context.Context, *report) error{
 	"shared-factory-events":   runSharedFactoryEvents,
 	"stampede":                runStampede,
 	"failsafe":                runFailSafe,
+	"lock-timeout":            runLockTimeout,
 	"skip-l2-read-when-stale": runSkipL2ReadWhenStale,
 	"tags":                    runTags,
 	"multinode":               runMultiNode,

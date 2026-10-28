@@ -17,11 +17,8 @@ func (g *stampedeGroup) Do(key string, fn func() (any, error)) (any, error, bool
 	return g.sf.Do(key, fn)
 }
 
-// DoWithTimeout is like Do, but the caller gives up waiting after timeout and
-// receives ErrLockTimeout. The in-flight call continues; its result is stored
-// in the cache when it completes (provided
-// AllowTimedOutFactoryBackgroundCompletion is true), benefiting future
-// callers.
+// DoWithTimeout is like Do, but the caller proceeds without the lock after
+// timeout. The in-flight call continues; both calls independently execute fn.
 func (g *stampedeGroup) DoWithTimeout(
 	key string,
 	timeout time.Duration,
@@ -48,6 +45,7 @@ func (g *stampedeGroup) DoWithTimeout(
 	case r := <-ch:
 		return r.v, r.err, r.shared
 	case <-time.After(timeout):
-		return nil, ErrLockTimeout, false
+		v, err := fn()
+		return v, err, false
 	}
 }

@@ -384,7 +384,7 @@ func WithAutoClone() EntryOption {
 }
 
 // WithLockTimeout sets [EntryOptions.LockTimeout], the maximum time to wait
-// for the stampede protection lock. Returns [ErrLockTimeout] on timeout.
+// for the stampede protection lock before proceeding without it.
 func WithLockTimeout(d time.Duration) EntryOption {
 	return func(o *EntryOptions) { o.LockTimeout = d }
 }

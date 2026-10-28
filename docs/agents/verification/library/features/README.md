@@ -7,3 +7,4 @@
 | [tag-invalidation](tag-invalidation.md) | `DeleteByTag` removes every entry carrying the tag and nothing else. |
 | [shared-factory-events](shared-factory-events.md) | The factory caller emits `Shared: false`; concurrent singleflight waiters emit `Shared: true`. |
 | [skip-l2-read-when-stale](skip-l2-read-when-stale.md) | A stale L1 value can skip a fresh L2 read and invoke the factory. |
+| [lock-timeout](lock-timeout.md) | A timed-out GetOrSet caller runs its miss path without the lock and returns its own result. |
