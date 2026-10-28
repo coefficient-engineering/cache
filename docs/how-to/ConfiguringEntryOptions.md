@@ -56,7 +56,7 @@ cache.WithFactoryTimeouts(100*time.Millisecond, 2*time.Second)
 
 ### L2 timeouts
 
-**`WithDistributedCacheTimeouts(soft, hard time.Duration)`** sets timeouts for L2 read and write operations. Works the same way as factory timeouts.
+**`WithDistributedCacheTimeouts(soft, hard time.Duration)`** sets L2 timeouts. The hard timeout bounds every L2 call. The soft timeout only bounds `GetOrSet`'s L2 read when a fail-safe stale value exists; past it, L2 is skipped and the factory runs with that fallback.
 
 ```go
 cache.WithDistributedCacheTimeouts(500*time.Millisecond, 2*time.Second)

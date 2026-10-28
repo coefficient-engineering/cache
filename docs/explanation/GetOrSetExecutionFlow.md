@@ -84,6 +84,7 @@ Inside singleflight, L1 is checked again. Another goroutine may have populated i
 If L2 is configured, `SkipL2Read` is false, and the L2 circuit breaker is not open:
 
 - The L2 adapter is called with a context that may have `DistributedCacheHardTimeout` applied.
+- If fail-safe is on and a stale L1 entry exists, the read is also bounded by `DistributedCacheSoftTimeout`: past it the read is cancelled and logged, and the flow continues to the factory with the stale fallback.
 - The circuit breaker records the result.
 - **Fresh hit:** The L2 entry is promoted to L1 (unless `SkipL1Write`). Tags are added to the tag index. The value is returned.
 - **Stale hit:** The L2 entry is logically expired. If `staleEntry` is still nil, this becomes the fail-safe candidate. `EventL2Miss` is emitted.

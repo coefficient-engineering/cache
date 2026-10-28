@@ -53,7 +53,9 @@ value, err := cache.GetOrSet(ctx, c, "key", factory,
 )
 ```
 
-The `DistributedCacheHardTimeout` is applied as a `context.WithTimeout` on the context passed to the L2 adapter's `Get` and `Set` methods.
+The `DistributedCacheHardTimeout` is applied as a `context.WithTimeout` on the context passed to every L2 adapter call.
+
+The `DistributedCacheSoftTimeout` applies to `GetOrSet`'s L2 read when fail-safe is enabled and L1 holds a stale value. If L2 is slower than the soft timeout, the read is cancelled and `GetOrSet` calls the factory right away; if the factory fails or times out, the stale value is returned. Without a stale fallback the soft timeout is ignored. `Get` and L2 writes only use the hard timeout.
 
 ## Background completion
 

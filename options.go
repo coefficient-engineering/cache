@@ -178,9 +178,16 @@ type EntryOptions struct {
 	// result stored in the cache. Default: true.
 	AllowTimedOutFactoryBackgroundCompletion bool
 
-	// DistributedCacheSoftTimeout is the max time to wait for an L2 read/write
-	// before falling back to a stale value (fail-safe must be on for a fallback
-	// to be available). Zero means no soft timeout.
+	// DistributedCacheSoftTimeout is the max time GetOrSet waits for its L2
+	// read when a fail-safe fallback already exists (fail-safe enabled and a
+	// stale L1 entry present). Past it, the read is cancelled and logged
+	// (no error, no circuit-breaker record, no rethrow) and GetOrSet goes
+	// straight to the factory with the stale value as fallback, as in
+	// FusionCache; a factory failure or factory timeout then serves the
+	// stale value. Without a fallback the read waits up to
+	// DistributedCacheHardTimeout. Get and L2 writes do not use it: make
+	// writes non-blocking with AllowBackgroundDistributedCacheOperations.
+	// Zero means no soft timeout.
 	DistributedCacheSoftTimeout time.Duration
 
 	// DistributedCacheHardTimeout is the absolute max time for any L2 operation.

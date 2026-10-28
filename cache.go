@@ -452,7 +452,12 @@ func (c *cache) loadOrCreate(
 	}
 
 	// L2 read
-	l2Value, l2Stale, l2Hit, err := c.loadFromL2(ctx, key, now, *eo)
+	// The L2 soft timeout only applies when a fail-safe fallback exists.
+	var l2SoftTimeout time.Duration
+	if eo.IsFailSafeEnabled && staleEntry != nil {
+		l2SoftTimeout = eo.DistributedCacheSoftTimeout
+	}
+	l2Value, l2Stale, l2Hit, err := c.loadFromL2(ctx, key, now, *eo, l2SoftTimeout)
 	if err != nil {
 		return nil, err
 	}
