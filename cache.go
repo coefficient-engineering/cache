@@ -389,7 +389,9 @@ func (c *cache) GetOrSet(
 	}
 	c.events.emit(EventCacheMiss{Key: key})
 
+	var executed bool
 	doFn := func() (any, error) {
+		executed = true
 		return c.loadOrCreate(ctx, key, &eo, staleEntry, factory)
 	}
 
@@ -404,7 +406,19 @@ func (c *cache) GetOrSet(
 	if err != nil {
 		return nil, err
 	}
-	return c.maybeAutoClone(result, eo)
+	outcome, ok := result.(getOrSetResult)
+	if !ok {
+		return nil, fmt.Errorf("cache: unexpected singleflight result %T", result)
+	}
+	if !executed && outcome.factoryProduced {
+		c.events.emit(EventFactorySuccess{Key: key, Shared: true})
+	}
+	return c.maybeAutoClone(outcome.value, eo)
+}
+
+type getOrSetResult struct {
+	value           any
+	factoryProduced bool
 }
 
 // loadOrCreate is the stampede-protected miss path of GetOrSet: it
@@ -417,27 +431,31 @@ func (c *cache) loadOrCreate(
 	eo *EntryOptions,
 	staleEntry *cacheEntry,
 	factory FactoryFunc,
-) (any, error) {
+) (getOrSetResult, error) {
 	pk := c.prefixedKey(key)
 	now := c.clock.Now()
 
 	// recheck L1 in case another goroutine populated it while we waited
 	if !eo.SkipL1Read {
 		if entry, ok := c.l1Entry(pk); ok && !entry.IsLogicallyExpired(now) {
-			return entry.value, nil
+			return getOrSetResult{value: entry.value}, nil
 		}
 	}
 
 	// L2 read
 	l2Value, l2Stale, l2Hit := c.loadFromL2(ctx, key, now, *eo)
 	if l2Hit {
-		return l2Value, nil
+		return getOrSetResult{value: l2Value}, nil
 	}
 	if staleEntry == nil {
 		staleEntry = l2Stale
 	}
 
-	return c.callFactory(ctx, key, eo, staleEntry, factory)
+	value, err := c.callFactory(ctx, key, eo, staleEntry, factory)
+	if err != nil {
+		return getOrSetResult{}, err
+	}
+	return getOrSetResult{value: value, factoryProduced: true}, nil
 }
 
 // callFactory runs factory with fail-safe and timeout handling and stores

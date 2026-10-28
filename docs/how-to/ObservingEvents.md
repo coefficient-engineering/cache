@@ -71,7 +71,7 @@ c.Events().On(func(e cache.Event) {
 | `EventCacheHit`                           | `Key string`, `IsStale bool`               | L1 hit (fresh or stale with `AllowStaleOnReadOnly`) |
 | `EventCacheMiss`                          | `Key string`                               | No fresh entry in L1                                |
 | `EventFactoryCall`                        | `Key string`                               | Factory is about to be called                       |
-| `EventFactorySuccess`                     | `Key string`, `Shared bool`                | Factory returned successfully                       |
+| `EventFactorySuccess`                     | `Key string`, `Shared bool`                | Successful factory result; `Shared` is true only for concurrent callers receiving that factory result through singleflight |
 | `EventFactoryError`                       | `Key string`, `Err error`                  | Factory returned an error                           |
 | `EventSoftTimeoutActivated`               | `Key string`                               | Soft timeout fired, returning stale value           |
 | `EventHardTimeoutActivated`               | `Key string`                               | Hard timeout fired                                  |

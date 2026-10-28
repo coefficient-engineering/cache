@@ -2,9 +2,53 @@ package cache
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestGetOrSetFactorySuccessSharedEvents(t *testing.T) {
+	c, _ := newTestCache(t)
+	const callers = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	shared, unshared := 0, 0
+	c.Events().On(func(event Event) {
+		success, ok := event.(EventFactorySuccess)
+		if !ok {
+			return
+		}
+		mu.Lock()
+		if success.Shared {
+			shared++
+		} else {
+			unshared++
+		}
+		mu.Unlock()
+	})
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := c.GetOrSet(context.Background(), "shared-event", func(context.Context, *FactoryExecutionContext) (any, error) {
+				time.Sleep(50 * time.Millisecond)
+				return "value", nil
+			})
+			if err != nil {
+				t.Errorf("GetOrSet: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if shared != callers-1 || unshared != 1 {
+		t.Fatalf("factory success events: Shared=true %d, false %d; want %d and 1", shared, unshared, callers-1)
+	}
+}
 
 func TestGetOrSet_BasicHitMiss(t *testing.T) {
 	c, _ := newTestCache(t)

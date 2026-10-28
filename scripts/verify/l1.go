@@ -55,6 +55,45 @@ func runStampede(ctx context.Context, r *report) error {
 	return nil
 }
 
+// runSharedFactoryEvents proves singleflight waiters are marked Shared.
+func runSharedFactoryEvents(ctx context.Context, r *report) error {
+	c, err := cache.New()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	const callers = 8
+	var mu sync.Mutex
+	shared, unshared := 0, 0
+	c.Events().On(func(e cache.Event) {
+		event, ok := e.(cache.EventFactorySuccess)
+		if !ok {
+			return
+		}
+		mu.Lock()
+		if event.Shared {
+			shared++
+		} else {
+			unshared++
+		}
+		mu.Unlock()
+	})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() {
+			_, _ = cache.GetOrSet(ctx, c, "shared-event", func(context.Context, *cache.FactoryExecutionContext) (string, error) {
+				time.Sleep(slowFactory)
+				return "value", nil
+			})
+		})
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	r.record(check{Name: "factory-success-sharing", OK: unshared == 1 && shared == callers-1, Observed: map[string]int{"shared": shared, "unshared": unshared}})
+	return nil
+}
+
 // runFailSafe proves a failing factory yields the stale value, not an error.
 func runFailSafe(ctx context.Context, r *report) error {
 	c, err := cache.New()
