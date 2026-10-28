@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Run tests for all workspace modules with race detector"
 set -euo pipefail
-for m in $(scripts/go-modules.sh); do echo "test $m"; (cd "$m" && go test "$@" ./... -race -count=1); done
+mods="$(scripts/go-modules.sh)" # separate assignment so set -e sees a failure
+for m in $mods; do echo "test $m"; (cd "$m" && go test "$@" ./... -race -count=1); done

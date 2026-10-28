@@ -2,7 +2,8 @@
 #MISE description="Fail if any workspace module needs formatting"
 set -euo pipefail
 status=0
-for m in $(scripts/go-modules.sh "$@"); do
+mods="$(scripts/go-modules.sh "$@")" # separate assignment so set -e sees a failure
+for m in $mods; do
 	out="$(cd "$m" && golangci-lint fmt --diff)"
 	if [ -n "$out" ]; then echo "$out"; status=1; fi
 done

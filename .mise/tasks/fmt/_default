@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Format all workspace modules"
 set -euo pipefail
-for m in $(scripts/go-modules.sh "$@"); do (cd "$m" && golangci-lint fmt); done
+mods="$(scripts/go-modules.sh "$@")" # separate assignment so set -e sees a failure
+for m in $mods; do (cd "$m" && golangci-lint fmt); done

@@ -3,4 +3,5 @@
 set -euo pipefail
 # -o /dev/null: compile only; a module with a single main package would
 # otherwise write its binary into the working tree.
-for m in $(scripts/go-modules.sh "$@"); do (cd "$m" && go build -o /dev/null ./...); done
+mods="$(scripts/go-modules.sh "$@")" # separate assignment so set -e sees a failure
+for m in $mods; do (cd "$m" && go build -o /dev/null ./...); done
