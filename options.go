@@ -77,21 +77,28 @@ type Options struct {
 	// reconnects after an outage. Default: true.
 	BackplaneAutoRecovery bool
 
-	// AutoRecoveryMaxRetries is the maximum number of recovery attempts.
-	// Default: 10.
+	// AutoRecoveryMaxRetries is retained for source compatibility.
+	// Deprecated: has no effect; recovery clears L1 synchronously and cannot fail.
 	AutoRecoveryMaxRetries int
 
-	// AutoRecoveryDelay is the pause between recovery attempts.
-	// Default: 2s.
+	// AutoRecoveryDelay is retained for source compatibility.
+	// Deprecated: has no effect; recovery clears L1 synchronously and cannot fail.
 	AutoRecoveryDelay time.Duration
 
 	// IgnoreIncomingBackplaneNotifications disables acting on received backplane
 	// messages. Useful for read-only replicas or during testing.
 	IgnoreIncomingBackplaneNotifications bool
 
-	// SkipL2OnError: if true (default), L2 errors are logged and swallowed.
-	// cache continues with L1 only. If false, L2 errors propagate to callers
-	// unless overridden by the per-entry ReThrowDistributedCacheExceptions flag.
+	// SkipL2OnError is the cache-wide default for L2 error propagation.
+	// When true (default), [New] leaves
+	// DefaultEntryOptions.ReThrowDistributedCacheExceptions as configured
+	// (false unless you set it), so L2 errors are logged, reported via
+	// [EventL2Error] and swallowed while the cache carries on with L1. When
+	// false, [New] sets DefaultEntryOptions.ReThrowDistributedCacheExceptions
+	// to true, so L2 errors propagate to callers; a per-call [EntryOption]
+	// can still set ReThrowDistributedCacheExceptions back to false.
+	// Serialization errors are governed separately by
+	// [EntryOptions.ReThrowSerializationExceptions].
 	SkipL2OnError bool
 }
 
@@ -171,18 +178,27 @@ type EntryOptions struct {
 	// result stored in the cache. Default: true.
 	AllowTimedOutFactoryBackgroundCompletion bool
 
-	// DistributedCacheSoftTimeout is the max time to wait for an L2 read/write
-	// before falling back to a stale value (fail-safe must be on for a fallback
-	// to be available). Zero means no soft timeout.
+	// DistributedCacheSoftTimeout is the max time GetOrSet waits for its L2
+	// read when a fail-safe fallback already exists (fail-safe enabled and a
+	// stale L1 entry present). Past it, the read is cancelled and logged
+	// (no error, no circuit-breaker record, no rethrow) and GetOrSet goes
+	// straight to the factory with the stale value as fallback, as in
+	// FusionCache; a factory failure or factory timeout then serves the
+	// stale value. Without a fallback the read waits up to
+	// DistributedCacheHardTimeout. Get and L2 writes do not use it: make
+	// writes non-blocking with AllowBackgroundDistributedCacheOperations.
+	// Zero means no soft timeout.
 	DistributedCacheSoftTimeout time.Duration
 
 	// DistributedCacheHardTimeout is the absolute max time for any L2 operation.
 	// Zero means wait indefinitely.
 	DistributedCacheHardTimeout time.Duration
 
-	// AllowBackgroundDistributedCacheOperations: when true, L2 writes are
-	// fire-and-forget goroutines. This improves latency but means a write
-	// failure is logged rather than returned to the caller.
+	// AllowBackgroundDistributedCacheOperations: when true, the L2 write of
+	// Set (and of GetOrSet's factory value) runs in a fire-and-forget
+	// goroutine. This improves latency but means a write failure is logged
+	// rather than returned to the caller. L2 reads and the L2 calls of
+	// Delete, DeleteByTag and Clear always run synchronously.
 	// Default: false (blocking, deterministic behaviour).
 	AllowBackgroundDistributedCacheOperations bool
 
@@ -210,16 +226,44 @@ type EntryOptions struct {
 	// value is still returned and the failure is logged.
 	ReThrowBackplaneExceptions bool
 
-	// ReThrowDistributedCacheExceptions: when true and AllowBackgroundDistributedCacheOperations
-	// is false, L2 errors are returned to the caller.
+	// ReThrowDistributedCacheExceptions: when true, an L2 adapter error from
+	// an L2 call that ran synchronously is returned to the caller, wrapped
+	// (use [errors.Is] with the adapter's error). Every L2 error is also
+	// logged and reported via [EventL2Error], with or without this flag.
+	//   - Get returns a failed L2 read as (nil, false, err).
+	//   - GetOrSet returns a failed L2 read without calling the factory and
+	//     without fail-safe fallback. A failed L2 write of the factory's
+	//     value is only logged; the value is still returned.
+	//   - Set returns a failed L2 write unless
+	//     AllowBackgroundDistributedCacheOperations is set (background
+	//     writes are only logged).
+	//   - Delete, DeleteByTag and Clear return a failed L2 call (Clear uses
+	//     the default entry options).
+	// A DistributedCacheHardTimeout expiry is an L2 error. While the L2
+	// circuit breaker is open, Set, Get and GetOrSet skip L2 and report no
+	// error. Local L1 changes are applied before the L2 call and are not
+	// rolled back; mutations still publish to the backplane, and a
+	// rethrown backplane error is joined with the L2 error.
+	// Default: false, or true when [Options.SkipL2OnError] is false.
 	ReThrowDistributedCacheExceptions bool
 
-	// ReThrowSerializationExceptions: when true, serialization errors during L2
-	// reads/writes are returned to the caller. Default: true.
+	// ReThrowSerializationExceptions: when true, a serialization error on
+	// the L2 path is returned to the caller, wrapped (use [errors.Is] or
+	// [errors.As] with the serializer's error). Independent of
+	// ReThrowDistributedCacheExceptions.
+	//   - Write (encoding the value for L2): always logged at Error level.
+	//     Set returns it unless AllowBackgroundDistributedCacheOperations is
+	//     set; the L1 write is kept. GetOrSet only logs it and returns the
+	//     factory's value.
+	//   - Read (decoding an L2 entry): always logged. Get returns it as
+	//     (nil, false, err); GetOrSet returns it without calling the
+	//     factory. When false, the undecodable entry is treated as an L2
+	//     miss, so GetOrSet calls the factory and overwrites it.
+	// Default: true.
 	ReThrowSerializationExceptions bool
 
-	// Priority hints to the L1 eviction policy. Higher priority entries are
-	// evicted last under memory pressure. Default: PriorityNormal.
+	// Priority is retained for source compatibility.
+	// Deprecated: not passed to L1 adapters; has no effect.
 	Priority EvictionPriority
 
 	// Size is an arbitrary weight unit used by L1 when a SizeLimit is configured
@@ -249,8 +293,11 @@ type EntryOptions struct {
 	Tags []string
 
 	// LockTimeout is the maximum time to wait to acquire the stampede protection
-	// lock for this key. After this, the caller proceeds without the lock
-	// (risks a mini-stampede but prevents indefinite starvation).
+	// lock for this key while another caller holds it. After this, the caller
+	// proceeds without the lock (risks a mini-stampede but prevents
+	// indefinite starvation). A caller that holds the lock itself (its own
+	// factory is merely slower than LockTimeout) keeps waiting for its
+	// factory, so the factory never runs twice for one call.
 	// Zero means wait indefinitely.
 	LockTimeout time.Duration
 
@@ -261,17 +308,16 @@ type EntryOptions struct {
 	EnableAutoClone bool
 }
 
-// EvictionPriority hints to the L1 eviction policy.
-// Higher priority entries are evicted last under memory pressure.
-// Unbounded L1 adapters (like the default [sync.Map] adapter) ignore this.
+// EvictionPriority is retained for source compatibility.
+// Deprecated: not passed to L1 adapters; has no effect.
 type EvictionPriority int
 
-// Eviction priority constants for the L1 cache.
+// Priority constants are retained for source compatibility and have no effect.
 const (
-	PriorityLow         EvictionPriority = -1 // evict first
-	PriorityNormal      EvictionPriority = 0  // default
-	PriorityHigh        EvictionPriority = 1  // evict last
-	PriorityNeverRemove EvictionPriority = 2  // never evict
+	PriorityLow         EvictionPriority = -1
+	PriorityNormal      EvictionPriority = 0
+	PriorityHigh        EvictionPriority = 1
+	PriorityNeverRemove EvictionPriority = 2
 )
 
 // EntryOption modifies an [EntryOptions] value. Compose multiple options
@@ -339,8 +385,8 @@ func WithTags(tags ...string) EntryOption {
 	}
 }
 
-// WithPriority sets [EntryOptions.Priority], an eviction hint for bounded
-// L1 adapters.
+// WithPriority sets [EntryOptions.Priority].
+// Deprecated: not passed to L1 adapters; has no effect.
 func WithPriority(p EvictionPriority) EntryOption {
 	return func(o *EntryOptions) { o.Priority = p }
 }
@@ -384,7 +430,7 @@ func WithAutoClone() EntryOption {
 }
 
 // WithLockTimeout sets [EntryOptions.LockTimeout], the maximum time to wait
-// for the stampede protection lock. Returns [ErrLockTimeout] on timeout.
+// for the stampede protection lock before proceeding without it.
 func WithLockTimeout(d time.Duration) EntryOption {
 	return func(o *EntryOptions) { o.LockTimeout = d }
 }

@@ -13,13 +13,9 @@ import "errors"
 //	}
 var ErrFactoryHardTimeout = errors.New("cache: factory hard timeout")
 
-// ErrLockTimeout is returned when [EntryOptions.LockTimeout] elapses before
-// the stampede protection lock is acquired. The caller may proceed without
-// the lock (best-effort).
+// ErrLockTimeout is retained for source compatibility.
 //
-// Use [errors.Is] to check:
-//
-//	if errors.Is(err, cache.ErrLockTimeout) {
-//	    // handle lock timeout
-//	}
+// Deprecated: no longer returned. When [EntryOptions.LockTimeout] elapses
+// while another caller holds the stampede lock, GetOrSet proceeds without
+// the lock instead of failing.
 var ErrLockTimeout = errors.New("cache: stampede lock timeout")

@@ -95,7 +95,7 @@ func stepSharedL2(ctx context.Context, r *report, a, b *node, runID string) erro
 	hits := b.events.count("EventL2Hit")
 	r.record(check{
 		Name: "node-b-reads-node-a-write-via-l2", OK: err == nil && ok && got == "v1" && hits == 1,
-		Observed: map[string]any{valueKey: got, "found": ok, "l2_hits": hits, "error": errString(err)},
+		Observed: map[string]any{valueKey: got, foundKey: ok, "l2_hits": hits, errorKey: errString(err)},
 	})
 	return nil
 }

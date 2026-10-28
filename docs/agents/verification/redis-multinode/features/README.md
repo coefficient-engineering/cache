@@ -4,3 +4,6 @@
 | --- | --- |
 | [shared-l2-and-invalidation](shared-l2-and-invalidation.md) | A write on one node is readable on another via L2; later updates and deletes reach the other node's L1 via the backplane. |
 | [backplane-rethrow](backplane-rethrow.md) | With synchronous rethrow enabled, a failed publish is returned from `Set`/`Delete`; defaults only log it. |
+| [l2-rethrow](l2-rethrow.md) | With a failing L2, defaults keep serving from L1; `ReThrowDistributedCacheExceptions` / `SkipL2OnError: false` return the L2 error, and `ReThrowSerializationExceptions` returns encode/decode failures. |
+| [expire-l2](expire-l2.md) | `Expire` makes every node call the factory next; with fail-safe the old L2 value stays a fallback, without it the Redis key is deleted. |
+| [l2-soft-timeout](l2-soft-timeout.md) | With a fail-safe stale value, `GetOrSet` skips a slow L2 read after `DistributedCacheSoftTimeout` and calls the factory; without one it waits. |

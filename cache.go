@@ -75,13 +75,19 @@ type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCach
 	// values are returned with ok == true. The event emitted in that case
 	// is [EventCacheHit] with IsStale: true.
 	//
-	// Get reads L1 first, then L2 if configured and L1 missed.
+	// Get reads L1 first, then L2 if configured and L1 missed. A failed L2
+	// read is returned under [EntryOptions.ReThrowDistributedCacheExceptions]
+	// and a failed decode under [EntryOptions.ReThrowSerializationExceptions];
+	// otherwise either is logged and treated as a miss.
 	// Use the type-safe wrapper [Get] for compile-time type safety.
 	Get(ctx context.Context, key string, opts ...EntryOption) (any, bool, error)
 
 	// Set stores value under key in all configured cache layers (L1, L2)
 	// and publishes a backplane notification. Skip flags in [EntryOptions]
-	// control which layers are written.
+	// control which layers are written. The L1 write always happens; a
+	// synchronous L2 write or publish failure is returned only when the
+	// matching ReThrow option is set (see
+	// [EntryOptions.ReThrowDistributedCacheExceptions]).
 	Set(ctx context.Context, key string, value any, opts ...EntryOption) error
 
 	// GetOrSet returns the cached value for key. On a cache miss it calls
@@ -98,18 +104,24 @@ type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCach
 	// On a fresh L1 hit with [EntryOptions.EagerRefreshThreshold] configured,
 	// a background refresh may be started.
 	//
+	// A failed L2 read (step 4) is returned without calling the factory
+	// when the matching ReThrow option is set. Failures while storing the
+	// factory's value (step 6) are only logged; the value is returned.
+	//
 	// Use the type-safe wrapper [GetOrSet] for compile-time type safety.
 	GetOrSet(ctx context.Context, key string, factory FactoryFunc, opts ...EntryOption) (any, error)
 
 	// Delete removes the entry from L1 and L2. Publishes a
 	// [backplane.MessageTypeDelete] backplane notification.
-	// Does not error if the key does not exist.
+	// Does not error if the key does not exist. A failed L2 delete is
+	// returned under [EntryOptions.ReThrowDistributedCacheExceptions].
 	Delete(ctx context.Context, key string, opts ...EntryOption) error
 
 	// DeleteByTag removes all entries associated with tag from L1
 	// (via the in-memory tag index) and L2 (via [l2.Adapter.DeleteByTag]).
 	// Publishes a [backplane.MessageTypeDelete] backplane notification for
-	// each removed key.
+	// each removed key. A failed L2 call is returned under
+	// [EntryOptions.ReThrowDistributedCacheExceptions].
 	DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error
 
 	// Expire marks the entry as logically expired without removing it from
@@ -117,13 +129,21 @@ type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCach
 	// expiry. If fail-safe is not enabled on subsequent reads, the stale
 	// value is not returned.
 	//
+	// In L2 (unless [EntryOptions.SkipL2Write]): with fail-safe enabled the
+	// entry is rewritten as logically expired, keeping its physical expiry
+	// so it stays a fail-safe fallback on every node; without fail-safe it
+	// is deleted. The L2 call runs even while the L2 circuit breaker is open.
+	// A failed L2 call is returned under
+	// [EntryOptions.ReThrowDistributedCacheExceptions].
+	//
 	// Publishes a [backplane.MessageTypeExpire] backplane notification.
 	Expire(ctx context.Context, key string, opts ...EntryOption) error
 
 	// Clear removes all entries from L1 and clears the tag index. When
 	// clearL2 is true and an L2 adapter is configured, calls
 	// [l2.Adapter.Clear]. Publishes a [backplane.MessageTypeClear]
-	// backplane notification.
+	// backplane notification. Error handling follows the default entry
+	// options.
 	Clear(ctx context.Context, clearL2 bool) error
 
 	// Name returns the configured cache name. Defaults to "default".
@@ -231,8 +251,10 @@ func (c *cache) prefixedKey(key string) string {
 
 // storeSafely stores a value under key in L1 and L2 and publishes a
 // backplane notification, honouring the skip flags in opts. The local
-// writes always happen; the returned error is the backplane publish error
-// rethrown under [EntryOptions.ReThrowBackplaneExceptions].
+// writes always happen and the publish is attempted even if the L2 write
+// failed; the returned error joins the L2 write error rethrown by writeL2
+// and the publish error rethrown under
+// [EntryOptions.ReThrowBackplaneExceptions].
 func (c *cache) storeSafely(ctx context.Context, key string, value any, opts EntryOptions) error {
 	pk := c.prefixedKey(key)
 	now := c.clock.Now()
@@ -255,12 +277,13 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 	}
 
 	// L2 write
+	var l2Err error
 	if c.l2 != nil && !opts.SkipL2Write {
-		c.writeL2(ctx, key, value, opts)
+		l2Err = c.writeL2(ctx, key, value, opts)
 	}
 
 	// backplane notification
-	return c.publishBackplane(ctx, backplane.MessageTypeSet, key, opts)
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeSet, key, opts))
 }
 
 // computePhysicalExpiry returns when an entry written at now is physically
@@ -390,21 +413,37 @@ func (c *cache) GetOrSet(
 	c.events.emit(EventCacheMiss{Key: key})
 
 	doFn := func() (any, error) {
-		return c.loadOrCreate(ctx, key, &eo, staleEntry, factory)
+		// Each execution gets its own options copy: after a lock timeout an
+		// abandoned call and the caller's bypass may both run.
+		runOpts := eo
+		return c.loadOrCreate(ctx, key, &runOpts, staleEntry, factory)
 	}
 
 	// execute with stampede protection
 	var result any
+	var executed bool
 	var err error
 	if eo.LockTimeout > 0 {
-		result, err, _ = c.stampede.DoWithTimeout(pk, eo.LockTimeout, doFn)
+		result, executed, err = c.stampede.DoWithTimeout(pk, eo.LockTimeout, doFn)
 	} else {
-		result, err, _ = c.stampede.Do(pk, doFn)
+		result, executed, err = c.stampede.Do(pk, doFn)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return c.maybeAutoClone(result, eo)
+	outcome, ok := result.(getOrSetResult)
+	if !ok {
+		return nil, fmt.Errorf("cache: unexpected singleflight result %T", result)
+	}
+	if !executed && outcome.factoryProduced {
+		c.events.emit(EventFactorySuccess{Key: key, Shared: true})
+	}
+	return c.maybeAutoClone(outcome.value, eo)
+}
+
+type getOrSetResult struct {
+	value           any
+	factoryProduced bool
 }
 
 // loadOrCreate is the stampede-protected miss path of GetOrSet: it
@@ -417,27 +456,56 @@ func (c *cache) loadOrCreate(
 	eo *EntryOptions,
 	staleEntry *cacheEntry,
 	factory FactoryFunc,
-) (any, error) {
+) (getOrSetResult, error) {
 	pk := c.prefixedKey(key)
 	now := c.clock.Now()
 
 	// recheck L1 in case another goroutine populated it while we waited
 	if !eo.SkipL1Read {
 		if entry, ok := c.l1Entry(pk); ok && !entry.IsLogicallyExpired(now) {
-			return entry.value, nil
+			return getOrSetResult{value: entry.value}, nil
 		}
 	}
 
-	// L2 read
-	l2Value, l2Stale, l2Hit := c.loadFromL2(ctx, key, now, *eo)
-	if l2Hit {
-		return l2Value, nil
+	l2Value, staleEntry, l2Hit, err := c.readL2ForGetOrSet(ctx, key, now, *eo, staleEntry)
+	if err != nil {
+		return getOrSetResult{}, err
 	}
+	if l2Hit {
+		return getOrSetResult{value: l2Value}, nil
+	}
+	value, err := c.callFactory(ctx, key, eo, staleEntry, factory)
+	if err != nil {
+		return getOrSetResult{}, err
+	}
+	return getOrSetResult{value: value, factoryProduced: true}, nil
+}
+
+// readL2ForGetOrSet is GetOrSet's L2 step. It returns a fresh L2 hit, or
+// the fail-safe fallback to use: staleEntry (stale L1) when set, otherwise
+// a stale L2 entry. A stale L1 value is the only source that activates
+// SkipL2ReadWhenStale (then L2 is not read and no soft timeout applies);
+// stale L2 values are discovered only by reading L2. The L2 soft timeout
+// only applies when a fail-safe fallback already exists.
+func (c *cache) readL2ForGetOrSet(
+	ctx context.Context,
+	key string,
+	now time.Time,
+	eo EntryOptions,
+	staleEntry *cacheEntry,
+) (value any, stale *cacheEntry, hit bool, err error) {
+	if staleEntry != nil && eo.SkipL2ReadWhenStale {
+		return nil, staleEntry, false, nil
+	}
+	var softTimeout time.Duration
+	if eo.IsFailSafeEnabled && staleEntry != nil {
+		softTimeout = eo.DistributedCacheSoftTimeout
+	}
+	value, l2Stale, hit, err := c.loadFromL2(ctx, key, now, eo, softTimeout)
 	if staleEntry == nil {
 		staleEntry = l2Stale
 	}
-
-	return c.callFactory(ctx, key, eo, staleEntry, factory)
+	return value, staleEntry, hit, err
 }
 
 // callFactory runs factory with fail-safe and timeout handling and stores
@@ -477,8 +545,8 @@ func (c *cache) callFactory(
 	}
 
 	c.events.emit(EventFactorySuccess{Key: key})
-	// The factory value is valid; a failed publish was logged and must not
-	// discard it.
+	// The factory value is valid; a failed L2 write or publish was logged
+	// and must not discard it.
 	_ = c.storeSafely(ctx, key, newValue, *eo)
 	return newValue, nil
 }
@@ -506,8 +574,8 @@ func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, 
 	}
 
 	// L2 read
-	if val, ok, err := c.getFromL2(ctx, key, now, eo); ok {
-		return val, true, err
+	if val, ok, err := c.getFromL2(ctx, key, now, eo); ok || err != nil {
+		return val, ok, err
 	}
 
 	c.events.emit(EventCacheMiss{Key: key})
@@ -523,8 +591,8 @@ func (c *cache) Set(ctx context.Context, key string, value any, opts ...EntryOpt
 }
 
 // Delete removes the entry from L1 and L2. Publishes a
-// [backplane.MessageTypeDelete] backplane notification.
-// Does not error if the key does not exist.
+// [backplane.MessageTypeDelete] backplane notification, even if the L2
+// delete failed. Does not error if the key does not exist.
 func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	pk := c.prefixedKey(key)
@@ -533,32 +601,41 @@ func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) err
 	c.evictL1(pk)
 
 	// remove from l2
+	var l2Err error
 	if c.l2 != nil && !eo.SkipL2Write {
-		if err := c.l2.Delete(ctx, pk); err != nil {
-			c.logger.Warn("cache: L2 delete failed", slog.String("key", key), slog.String("error", err.Error()))
+		err := c.callL2(ctx, eo, func(ctx context.Context) error { return c.l2.Delete(ctx, pk) })
+		if err != nil {
+			l2Err = c.l2Failed(ctx, eo, l2Op{name: "delete", key: key}, err)
 		}
 	}
 
-	return c.publishBackplane(ctx, backplane.MessageTypeDelete, key, eo)
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeDelete, key, eo))
 }
 
 // Expire marks the entry as logically expired without removing it from L1.
 // The value remains available as a fail-safe fallback until physical
 // expiry. If fail-safe is not enabled on subsequent reads, the stale value
-// is not returned. Publishes a [backplane.MessageTypeExpire] backplane
-// notification.
+// is not returned. In L2 (unless SkipL2Write), see expireL2: with
+// fail-safe on in opts the entry is rewritten as logically expired, with
+// fail-safe off it is deleted. Publishes a [backplane.MessageTypeExpire]
+// backplane notification, even if the L2 call failed.
 func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	c.expireL1(c.prefixedKey(key))
 
-	return c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo)
+	var l2Err error
+	if c.l2 != nil && !eo.SkipL2Write {
+		l2Err = c.expireL2(ctx, key, eo)
+	}
+
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo))
 }
 
 // DeleteByTag removes all entries associated with tag from L1 (via the
 // in-memory tag index) and L2 (via [l2.Adapter.DeleteByTag]). Publishes a
 // [backplane.MessageTypeDelete] backplane notification for each removed
-// key; every key is published even if an earlier publish fails, and
-// rethrown publish errors are joined.
+// key; every key is published even if the L2 call or an earlier publish
+// fails, and rethrown errors are joined.
 func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 
@@ -570,18 +647,17 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 		c.evictL1(pk)
 	}
 
+	errs := make([]error, 0, len(keys)+1)
+
 	// Remove from L2 (adapter handles its own tag bookkeeping)
 	if c.l2 != nil && !eo.SkipL2Write {
-		if err := c.l2.DeleteByTag(ctx, tag); err != nil {
-			c.logger.Warn("cache: L2 DeleteByTag failed",
-				slog.String("tag", tag),
-				slog.String("error", err.Error()),
-			)
+		err := c.callL2(ctx, eo, func(ctx context.Context) error { return c.l2.DeleteByTag(ctx, tag) })
+		if err != nil {
+			errs = append(errs, c.l2Failed(ctx, eo, l2Op{name: "delete by tag", tag: tag}, err))
 		}
 	}
 
 	// Notify backplane for each removed key
-	errs := make([]error, 0, len(keys))
 	for _, pk := range keys {
 		unprefixed := pk[len(c.opts.KeyPrefix):]
 		errs = append(errs, c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo))
@@ -591,9 +667,12 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 
 // Clear removes all entries from L1 and clears the tag index. When clearL2
 // is true and an L2 adapter is configured, calls [l2.Adapter.Clear].
-// Publishes a [backplane.MessageTypeClear] backplane notification governed
-// by the cache's default entry options.
+// Publishes a [backplane.MessageTypeClear] backplane notification, even if
+// the L2 clear failed. L2 and publish error handling follow the cache's
+// default entry options.
 func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive // flag-parameter: public API mirrors IFusionCache
+	eo := c.opts.DefaultEntryOptions
+
 	// Clear L1: iterate and delete all entries
 	c.l1.Clear()
 
@@ -601,15 +680,14 @@ func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive
 	c.tagIdx.clear()
 
 	// Clear L2 if requested
+	var l2Err error
 	if clearL2 && c.l2 != nil {
-		if err := c.l2.Clear(ctx); err != nil {
-			c.logger.Warn("cache: L2 clear failed",
-				slog.String("error", err.Error()),
-			)
+		if err := c.callL2(ctx, eo, c.l2.Clear); err != nil {
+			l2Err = c.l2Failed(ctx, eo, l2Op{name: "clear"}, err)
 		}
 	}
 
-	return c.publishBackplane(ctx, backplane.MessageTypeClear, "", c.opts.DefaultEntryOptions)
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeClear, "", eo))
 }
 
 // Close shuts down background goroutines (backplane subscription) and

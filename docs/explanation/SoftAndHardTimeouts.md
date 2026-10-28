@@ -47,11 +47,11 @@ The hard timeout guarantees bounded latency regardless of factory behavior.
 
 ## L2 timeout configuration
 
-L2 operations use a simpler model: only a hard timeout is applied via `context.WithTimeout`.
+L2 operations use a simpler model. The hard timeout bounds every L2 call via `context.WithTimeout`. The soft timeout only bounds `GetOrSet`'s L2 read, and only when a fail-safe fallback already exists (fail-safe on and a stale L1 entry): past it the read is cancelled and `GetOrSet` skips L2 and calls the factory, keeping the stale value as fallback. A factory error or factory timeout then serves the stale value. Without a fallback the read waits for L2 (up to the hard timeout), since there would be nothing to serve.
 
 | Field                         | Type            | Description                                                     |
 | ----------------------------- | --------------- | --------------------------------------------------------------- |
-| `DistributedCacheSoftTimeout` | `time.Duration` | Reserved for L2 soft timeout. 0 disables.                       |
+| `DistributedCacheSoftTimeout` | `time.Duration` | `GetOrSet` stops waiting for L2 and calls the factory when a fail-safe fallback exists. 0 disables. |
 | `DistributedCacheHardTimeout` | `time.Duration` | Applied to both L2 reads and writes. 0 means wait indefinitely. |
 
 ## Background completion

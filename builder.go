@@ -40,7 +40,15 @@ func newCache(opts *Options) (*cache, error) {
 		opts.BackplaneCircuitBreakerThreshold,
 		opts.BackplaneCircuitBreakerDuration,
 	)
-	c.bpCB.onRecovery = c.attemptAutoRecovery
+	c.l2CB.onStateChange = func(open bool) {
+		c.events.emit(EventL2CircuitBreakerStateChange{Open: open})
+	}
+	c.bpCB.onStateChange = func(open bool) {
+		c.events.emit(EventBackplaneCircuitBreakerStateChange{Open: open})
+		if !open && opts.BackplaneAutoRecovery {
+			c.attemptAutoRecovery()
+		}
+	}
 	// listen for bp invalidation messages
 	if c.bp != nil {
 		cancel, err := c.bp.Subscribe(c.handleBackplaneMessage)
@@ -149,6 +157,8 @@ func WithNodeID(id string) Option {
 //   - If Backplane is non-nil, calls Subscribe to start receiving messages.
 //   - Creates circuit breakers for L2 and backplane (disabled when the
 //     threshold is 0).
+//   - If SkipL2OnError is false, sets
+//     DefaultEntryOptions.ReThrowDistributedCacheExceptions to true.
 func New(opts ...Option) (Cache, error) {
 	o := &Options{
 		CacheName:              "default",
@@ -177,6 +187,11 @@ func New(opts ...Option) (Cache, error) {
 	// Generate a random node ID if none provided
 	if o.NodeID == "" {
 		o.NodeID = generateNodeID()
+	}
+
+	// L2 errors propagate by default; per-call options may still opt out.
+	if !o.SkipL2OnError {
+		o.DefaultEntryOptions.ReThrowDistributedCacheExceptions = true
 	}
 
 	// Discard logger if none provided

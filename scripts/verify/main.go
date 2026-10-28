@@ -3,7 +3,9 @@
 //
 // Usage: go run ./scripts/verify <scenario>
 //
-// Scenarios: stampede, failsafe, tags (L1 only); multinode (needs REDIS_ADDR).
+// Scenarios: stampede, failsafe, tags, shared-factory-events, breaker-events,
+// lock-timeout, skip-l2-read-when-stale (L1 or in-memory L2); multinode,
+// backplane-rethrow, l2-rethrow, expire-l2, l2-soft-timeout (need REDIS_ADDR).
 // Exit status is 0 only when every check in the scenario holds.
 package main
 
@@ -19,8 +21,12 @@ import (
 	"github.com/coefficient-engineering/cache"
 )
 
-// valueKey labels the observed cached value in check output.
-const valueKey = "value"
+// Labels shared by check output.
+const (
+	valueKey = "value" // the observed cached value
+	errorKey = "error" // the observed error string
+	foundKey = "found" // whether the value was found
+)
 
 // check is one observed result.
 type check struct {
@@ -76,11 +82,18 @@ func (l *eventLog) count(name string) int {
 }
 
 var scenarios = map[string]func(context.Context, *report) error{
-	"backplane-rethrow": runBackplaneRethrow,
-	"stampede":          runStampede,
-	"failsafe":          runFailSafe,
-	"tags":              runTags,
-	"multinode":         runMultiNode,
+	"backplane-rethrow":       runBackplaneRethrow,
+	"shared-factory-events":   runSharedFactoryEvents,
+	"stampede":                runStampede,
+	"failsafe":                runFailSafe,
+	"breaker-events":          runBreakerEvents,
+	"lock-timeout":            runLockTimeout,
+	"skip-l2-read-when-stale": runSkipL2ReadWhenStale,
+	"tags":                    runTags,
+	"multinode":               runMultiNode,
+	"l2-rethrow":              runL2Rethrow,
+	"expire-l2":               runExpireL2,
+	"l2-soft-timeout":         runL2SoftTimeout,
 }
 
 func main() {

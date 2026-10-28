@@ -21,7 +21,7 @@ type FactoryFunc func(ctx context.Context, fctx *FactoryExecutionContext) (any, 
 
 The `FactoryExecutionContext` contains:
 
-- **`Options *EntryOptions`** — A mutable pointer to the `EntryOptions` for this cache operation. The factory can modify any field: `Duration`, `Tags`, `SkipL1Write`, `Priority`, etc.
+- **`Options *EntryOptions`** — A mutable pointer to the `EntryOptions` for this cache operation. The factory can modify fields such as `Duration`, `Tags`, and `SkipL1Write`. `Priority` is retained for compatibility but has no effect.
 - **`StaleValue any`** — The previously cached (now stale) value, if one exists.
 - **`HasStaleValue bool`** — Distinguishes a nil stale value from "no stale entry".
 

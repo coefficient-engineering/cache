@@ -53,7 +53,7 @@ func runBackplaneRethrow(ctx context.Context, r *report) error {
 	got, ok, getErr := cache.Get[string](ctx, c, "k")
 	r.record(check{
 		Name: "local-write-kept-after-failed-publish", OK: getErr == nil && ok && got == "rethrown",
-		Observed: map[string]any{valueKey: got, "found": ok},
+		Observed: map[string]any{valueKey: got, foundKey: ok},
 	})
 
 	err = c.Delete(ctx, "k", syncRethrow)

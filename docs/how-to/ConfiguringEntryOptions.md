@@ -56,7 +56,7 @@ cache.WithFactoryTimeouts(100*time.Millisecond, 2*time.Second)
 
 ### L2 timeouts
 
-**`WithDistributedCacheTimeouts(soft, hard time.Duration)`** sets timeouts for L2 read and write operations. Works the same way as factory timeouts.
+**`WithDistributedCacheTimeouts(soft, hard time.Duration)`** sets L2 timeouts. The hard timeout bounds every L2 call. The soft timeout only bounds `GetOrSet`'s L2 read when a fail-safe stale value exists; past it, L2 is skipped and the factory runs with that fallback.
 
 ```go
 cache.WithDistributedCacheTimeouts(500*time.Millisecond, 2*time.Second)
@@ -78,13 +78,9 @@ cache.WithEagerRefresh(0.9)
 cache.WithTags("category:electronics", "featured")
 ```
 
-### Priority and size
+### Priority (deprecated) and size
 
-**`WithPriority(p EvictionPriority)`** hints to the L1 eviction policy. Higher priority entries are evicted last. Constants: `PriorityLow` (-1), `PriorityNormal` (0), `PriorityHigh` (1), `PriorityNeverRemove` (2).
-
-```go
-cache.WithPriority(cache.PriorityHigh)
-```
+`EntryOptions.Priority`, `EvictionPriority`, its constants, and `WithPriority` are retained for source compatibility. Priority is not passed to L1 adapters and has no effect.
 
 **`WithSize(n int64)`** sets an arbitrary weight for L1 eviction decisions. Bounded L1 adapters use this; the default `sync.Map` adapter ignores it.
 
@@ -108,11 +104,24 @@ cache.WithSkipL2ReadWhenStale()
 
 ### L2 background operations
 
-**`WithBackgroundL2Ops()`** makes L2 writes fire-and-forget. This reduces latency but means write failures are logged rather than returned.
+**`WithBackgroundL2Ops()`** makes the L2 write of `Set` and `GetOrSet` fire-and-forget. This reduces latency but means write failures are logged rather than returned. L2 reads and the L2 calls of `Delete`, `DeleteByTag` and `Clear` always run synchronously.
 
 ```go
 cache.WithBackgroundL2Ops()
 ```
+
+### L2 and serialization errors
+
+There is no `With...` helper for these; set the fields with an inline `EntryOption`.
+
+- **`ReThrowDistributedCacheExceptions`** (default `false`, or `true` when `Options.SkipL2OnError` is `false`): a failed synchronous L2 call is returned, wrapped, instead of only being logged and reported as `EventL2Error`.
+- **`ReThrowSerializationExceptions`** (default `true`): a failure to encode a value for L2, or to decode an L2 entry, is returned. When off, it is logged and a bad L2 entry counts as a miss.
+
+```go
+func(o *cache.EntryOptions) { o.ReThrowDistributedCacheExceptions = true }
+```
+
+Which methods return which errors is detailed in [Adding a Distributed L2: Error handling](AddingDistributedL2.md#error-handling).
 
 ### Auto-clone
 
@@ -124,7 +133,7 @@ cache.WithAutoClone()
 
 ### Stampede protection
 
-**`WithLockTimeout(d time.Duration)`** sets the maximum time to wait for the stampede protection lock. If the timeout elapses, the caller proceeds without the lock. A value of 0 means wait indefinitely.
+**`WithLockTimeout(d time.Duration)`** sets the maximum time to wait for the stampede protection lock. If the timeout elapses while another caller holds the lock, the caller proceeds without it. A caller that holds the lock itself keeps waiting for its own factory, so a lone slow factory runs only once. A value of 0 means wait indefinitely.
 
 ```go
 cache.WithLockTimeout(5 * time.Second)

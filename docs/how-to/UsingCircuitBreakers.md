@@ -41,6 +41,17 @@ When the backplane circuit breaker transitions from open/half-open to closed (a 
 
 This auto-recovery behavior is controlled by `BackplaneAutoRecovery` on the `Options` struct (default: `true`).
 
+There is no `With...` helper; to disable recovery, pass a custom `Option`:
+
+```go
+c, err := cache.New(
+    cache.WithBackplane(bp),
+    func(o *cache.Options) { o.BackplaneAutoRecovery = false },
+)
+```
+
+`AutoRecoveryMaxRetries` and `AutoRecoveryDelay` are deprecated and have no effect.
+
 ## Disabling circuit breakers
 
 Set the threshold to 0 (the default) to disable:
@@ -56,8 +67,8 @@ When disabled, `IsOpen()` always returns `false` and `Record()` is a no-op.
 
 The cache emits events when circuit breaker state changes:
 
-- `EventL2CircuitBreakerStateChange{Open: true}` when the L2 circuit opens
-- `EventBackplaneCircuitBreakerStateChange{Open: true}` when the backplane circuit opens
+- `EventL2CircuitBreakerStateChange{Open: true}` once when the L2 breaker opens and `{Open: false}` once when a successful half-open probe closes it.
+- `EventBackplaneCircuitBreakerStateChange{Open: true}` once when the backplane breaker opens and `{Open: false}` once when a successful half-open probe closes it.
 
 Subscribe to these via `c.Events().On(...)`. See [Observing Events](ObservingEvents.md).
 
