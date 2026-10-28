@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run Semgrep project rules (given files, or the whole repo)"
+set -euo pipefail
+semgrep scan --config .semgrep/rules --error --metrics off --skip-unknown-extensions "${@:-.}"

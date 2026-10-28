@@ -1,0 +1,17 @@
+rules:
+  - id: exec-shell-interpolation
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A shell command is built from a non-literal string, which allows command
+      injection. Call exec.Command(name, arg1, arg2, ...) directly with each
+      argument passed separately; never route dynamic input through "sh -c".
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("$SH", "-c", $CMD, ...)
+          - pattern: exec.CommandContext($CTX, "$SH", "-c", $CMD, ...)
+      - metavariable-regex:
+          metavariable: $SH
+          regex: ^(/bin/|/usr/bin/)?(sh|bash|zsh)$
+      - pattern-not: exec.Command("$SH", "-c", "...", ...)
+      - pattern-not: exec.CommandContext($CTX, "$SH", "-c", "...", ...)

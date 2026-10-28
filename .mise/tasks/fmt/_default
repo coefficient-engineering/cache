@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Format all workspace modules"
+set -euo pipefail
+for m in $(scripts/go-modules.sh "$@"); do (cd "$m" && golangci-lint fmt); done

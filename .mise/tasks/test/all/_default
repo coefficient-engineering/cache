@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run tests for all workspace modules; extra args go to go test"
+set -euo pipefail
+for m in $(scripts/go-modules.sh); do echo "test $m"; (cd "$m" && go test "$@" ./... -count=1); done

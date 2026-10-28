@@ -1,0 +1,7 @@
+# Replaces Semgrep's default ignores; keep aligned with lint/format exclusions.
+.git/
+tmp/
+vendor/
+coverage.*
+# Rule fixtures intentionally contain findings.
+.semgrep/

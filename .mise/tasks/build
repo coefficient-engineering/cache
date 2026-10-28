@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Compile all workspace modules (or those owning the given files)"
+set -euo pipefail
+for m in $(scripts/go-modules.sh "$@"); do (cd "$m" && go build ./...); done

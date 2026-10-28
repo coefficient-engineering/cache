@@ -1,0 +1,57 @@
+[tools]
+go = "1.25.14"
+golangci-lint = "2.15.0"
+lefthook = "2.2.2"
+gitleaks = "8.30.1"
+cocogitto = "7.0.0"
+"pipx:semgrep" = "1.182.1"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+
+# Multi-module tasks (build, lint, fmt, fmt:check, test:all, test:all:race,
+# vuln, semgrep) live as scripts in .mise/tasks/.
+
+[tasks.bootstrap]
+description = "Install pinned tools and activate git hooks"
+run = ["mise install", "lefthook install"]
+
+[tasks.test]
+description = "Run root module tests"
+run = "go test ./... -count=1"
+
+[tasks."test:verbose"]
+description = "Run root module tests with verbose output"
+run = "go test ./... -v -count=1"
+
+[tasks."test:race"]
+description = "Run root module tests with race detector"
+run = "go test ./... -race -count=1"
+
+[tasks."test:cover"]
+description = "Run root module tests with coverage report"
+run = ["go test ./... -coverprofile=coverage.out", "go tool cover -func=coverage.out"]
+
+[tasks."test:cover:html"]
+description = "Generate and open HTML coverage report"
+run = [
+  "go test ./... -coverprofile=coverage.out",
+  "go tool cover -html=coverage.out -o coverage.html",
+  "open coverage.html",
+]
+
+[tasks."semgrep:test"]
+description = "Run Semgrep project rule tests"
+run = "semgrep scan --test --metrics off .semgrep/rules"
+
+[tasks.check]
+description = "Run the complete local gate (format check, lint, build, race tests, rule tests)"
+run = [
+  { task = "fmt:check" },
+  { task = "lint" },
+  { task = "build" },
+  { task = "test:all:race" },
+  { task = "semgrep:test" },
+]
+
+[tasks.clean]
+description = "Remove generated files"
+run = "rm -f coverage.out coverage.html"

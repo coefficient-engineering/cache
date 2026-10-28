@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Fail if any workspace module needs formatting"
+set -euo pipefail
+status=0
+for m in $(scripts/go-modules.sh "$@"); do
+	out="$(cd "$m" && golangci-lint fmt --diff)"
+	if [ -n "$out" ]; then echo "$out"; status=1; fi
+done
+[ "$status" -eq 0 ] || { echo "run: mise run fmt" >&2; exit 1; }

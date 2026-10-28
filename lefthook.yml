@@ -1,0 +1,30 @@
+# Local feedback only; CI (.github/workflows/ci.yml) is the complete gate.
+# Activate with: mise run bootstrap
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: go-format
+      glob: "*.go"
+      exclude: [".semgrep/**"]
+      run: mise run fmt:check {staged_files}
+    - name: go-lint
+      glob: "*.go"
+      exclude: [".semgrep/**"]
+      run: mise run lint {staged_files}
+    - name: semgrep
+      glob: "*.go"
+      exclude: [".semgrep/**"]
+      run: mise run semgrep {staged_files}
+    - name: gitleaks
+      run: mise exec -- gitleaks git --pre-commit --redact --staged --verbose
+
+pre-push:
+  jobs:
+    - name: race-tests
+      run: mise run test:all:race
+
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      run: mise exec -- scripts/commit-msg.sh {1}

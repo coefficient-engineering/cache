@@ -1,0 +1,12 @@
+rules:
+  - id: tls-insecure-skip-verify
+    languages: [go]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is disabled. Remove InsecureSkipVerify and
+      trust the server via RootCAs (x509.CertPool) or a proper CA bundle instead.
+    pattern-either:
+      - pattern: |
+          tls.Config{..., InsecureSkipVerify: true, ...}
+      - pattern: |
+          $CFG.InsecureSkipVerify = true

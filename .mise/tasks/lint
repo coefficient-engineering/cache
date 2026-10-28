@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Run golangci-lint on all workspace modules (or those owning the given files)"
+set -euo pipefail
+status=0
+for m in $(scripts/go-modules.sh "$@"); do
+	echo "lint $m"
+	(cd "$m" && golangci-lint run ./...) || status=1
+done
+exit "$status"

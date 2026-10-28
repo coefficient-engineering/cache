@@ -1,0 +1,3 @@
+# Conventional Commits policy for `cog verify` (commit-msg hook) and `cog check` (CI).
+# Merge commits produced by GitHub are not checked.
+ignore_merge_commits = true

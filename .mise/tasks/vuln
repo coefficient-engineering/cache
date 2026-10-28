@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run govulncheck on all workspace modules (network)"
+set -euo pipefail
+for m in $(scripts/go-modules.sh); do echo "vuln $m"; (cd "$m" && govulncheck ./...); done
