@@ -8,13 +8,16 @@ import (
 	"github.com/coefficient-engineering/cache/backplane"
 )
 
-// publishBackplane publishes a message to the backplane.
-func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageType, key string, opts EntryOptions) {
+// publishBackplane publishes a message to the backplane. It returns the
+// publish error only when the publish ran synchronously and
+// ReThrowBackplaneExceptions is set; otherwise failures are logged and nil
+// is returned.
+func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageType, key string, opts EntryOptions) error {
 	if c.bp == nil || opts.SkipBackplaneNotifications {
-		return
+		return nil
 	}
 	if c.bpCB.IsOpen() {
-		return // circuit breaker open
+		return nil // circuit breaker open
 	}
 	msg := backplane.Message{
 		Type:      msgType,
@@ -23,7 +26,7 @@ func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageT
 		SourceID:  c.opts.NodeID,
 	}
 
-	doPublish := func() {
+	doPublish := func() error {
 		err := c.bp.Publish(ctx, msg)
 		c.bpCB.Record(err)
 		if err != nil {
@@ -32,15 +35,19 @@ func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageT
 				slog.String("type", fmt.Sprintf("%d", msgType)),
 				slog.String("error", err.Error()),
 			)
-		} else {
-			c.events.emit(EventBackplaneSent{Key: key, Type: msgType})
+			return fmt.Errorf("cache: backplane publish (type %d, key %q): %w", msgType, key, err)
 		}
+		c.events.emit(EventBackplaneSent{Key: key, Type: msgType})
+		return nil
 	}
 	if opts.AllowBackgroundBackplaneOperations {
-		go doPublish()
-	} else {
-		doPublish()
+		go func() { _ = doPublish() }() // background: failure already logged
+		return nil
 	}
+	if err := doPublish(); err != nil && opts.ReThrowBackplaneExceptions {
+		return err
+	}
+	return nil
 }
 
 // handleBackplaneMessage processes an incoming backplane message.

@@ -203,7 +203,11 @@ type EntryOptions struct {
 	AllowBackgroundBackplaneOperations bool
 
 	// ReThrowBackplaneExceptions: when true and AllowBackgroundBackplaneOperations
-	// is false, backplane publish errors are returned to the caller.
+	// is false, backplane publish errors are returned to the caller of Set,
+	// Delete, Expire, DeleteByTag and Clear (Clear uses the default entry
+	// options). Local L1/L2 changes are applied before the publish and are
+	// not rolled back. GetOrSet never returns a publish error: the factory
+	// value is still returned and the failure is logged.
 	ReThrowBackplaneExceptions bool
 
 	// ReThrowDistributedCacheExceptions: when true and AllowBackgroundDistributedCacheOperations

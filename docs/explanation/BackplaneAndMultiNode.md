@@ -60,7 +60,7 @@ The `Message.CacheName` field allows multiple cache instances to share one backp
 
 By default (`AllowBackgroundBackplaneOperations: true`), backplane publishes are fire-and-forget goroutines. The mutation returns to the caller without waiting for the publish to complete.
 
-Setting `AllowBackgroundBackplaneOperations: false` makes publishes synchronous. Combined with `ReThrowBackplaneExceptions: true`, this causes backplane publish errors to be logged (though the current implementation does not propagate them to the caller from `publishBackplane`).
+Setting `AllowBackgroundBackplaneOperations: false` makes publishes synchronous. Combined with `ReThrowBackplaneExceptions: true`, a failed publish is returned as an error from `Set`, `Delete`, `Expire`, `DeleteByTag` and `Clear` (wrapping the transport error, so `errors.Is` works). The local L1/L2 change has already been applied and is not rolled back. `GetOrSet` still returns its factory value and only logs the publish failure.
 
 ## Auto-recovery
 

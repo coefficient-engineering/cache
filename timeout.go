@@ -84,7 +84,7 @@ func (c *cache) awaitFactory(
 		case r := <-resultCh:
 			// Factory completed.
 			if r.err == nil && softFired && opts.AllowTimedOutFactoryBackgroundCompletion {
-				c.storeSafely(context.WithoutCancel(ctx), call.key, r.value, *call.fctx.Options)
+				_ = c.storeSafely(context.WithoutCancel(ctx), call.key, r.value, *call.fctx.Options) // caller already answered
 			}
 			factoryCancel()
 			return r.value, r.err
@@ -139,7 +139,7 @@ func (c *cache) handleSoftTimeout(
 		select {
 		case r := <-resultCh:
 			if r.err == nil {
-				c.storeSafely(storeCtx, call.key, r.value, *call.fctx.Options)
+				_ = c.storeSafely(storeCtx, call.key, r.value, *call.fctx.Options) // background: no caller to return to
 			}
 			factoryCancel()
 		case <-time.After(safetyTimeout):

@@ -49,6 +49,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -229,8 +230,10 @@ func (c *cache) prefixedKey(key string) string {
 }
 
 // storeSafely stores a value under key in L1 and L2 and publishes a
-// backplane notification, honouring the skip flags in opts.
-func (c *cache) storeSafely(ctx context.Context, key string, value any, opts EntryOptions) {
+// backplane notification, honouring the skip flags in opts. The local
+// writes always happen; the returned error is the backplane publish error
+// rethrown under [EntryOptions.ReThrowBackplaneExceptions].
+func (c *cache) storeSafely(ctx context.Context, key string, value any, opts EntryOptions) error {
 	pk := c.prefixedKey(key)
 	now := c.clock.Now()
 
@@ -257,9 +260,7 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 	}
 
 	// backplane notification
-	if c.bp != nil && !opts.SkipBackplaneNotifications {
-		c.publishBackplane(ctx, backplane.MessageTypeSet, key, opts)
-	}
+	return c.publishBackplane(ctx, backplane.MessageTypeSet, key, opts)
 }
 
 // computePhysicalExpiry returns when an entry written at now is physically
@@ -476,7 +477,9 @@ func (c *cache) callFactory(
 	}
 
 	c.events.emit(EventFactorySuccess{Key: key})
-	c.storeSafely(ctx, key, newValue, *eo)
+	// The factory value is valid; a failed publish was logged and must not
+	// discard it.
+	_ = c.storeSafely(ctx, key, newValue, *eo)
 	return newValue, nil
 }
 
@@ -516,8 +519,7 @@ func (c *cache) Get(ctx context.Context, key string, opts ...EntryOption) (any, 
 // which layers are written.
 func (c *cache) Set(ctx context.Context, key string, value any, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
-	c.storeSafely(ctx, key, value, eo)
-	return nil
+	return c.storeSafely(ctx, key, value, eo)
 }
 
 // Delete removes the entry from L1 and L2. Publishes a
@@ -537,11 +539,7 @@ func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) err
 		}
 	}
 
-	// notify backplane
-	if c.bp != nil && !eo.SkipBackplaneNotifications {
-		c.publishBackplane(ctx, backplane.MessageTypeDelete, key, eo)
-	}
-	return nil
+	return c.publishBackplane(ctx, backplane.MessageTypeDelete, key, eo)
 }
 
 // Expire marks the entry as logically expired without removing it from L1.
@@ -553,18 +551,14 @@ func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) err
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	c.expireL1(c.prefixedKey(key))
 
-	// Notify backplane
-	if c.bp != nil && !eo.SkipBackplaneNotifications {
-		c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo)
-	}
-
-	return nil
+	return c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo)
 }
 
 // DeleteByTag removes all entries associated with tag from L1 (via the
 // in-memory tag index) and L2 (via [l2.Adapter.DeleteByTag]). Publishes a
 // [backplane.MessageTypeDelete] backplane notification for each removed
-// key.
+// key; every key is published even if an earlier publish fails, and
+// rethrown publish errors are joined.
 func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 
@@ -587,19 +581,18 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 	}
 
 	// Notify backplane for each removed key
-	if c.bp != nil && !eo.SkipBackplaneNotifications {
-		for _, pk := range keys {
-			unprefixed := pk[len(c.opts.KeyPrefix):]
-			c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo)
-		}
+	errs := make([]error, 0, len(keys))
+	for _, pk := range keys {
+		unprefixed := pk[len(c.opts.KeyPrefix):]
+		errs = append(errs, c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo))
 	}
-
-	return nil
+	return errors.Join(errs...)
 }
 
 // Clear removes all entries from L1 and clears the tag index. When clearL2
 // is true and an L2 adapter is configured, calls [l2.Adapter.Clear].
-// Publishes a [backplane.MessageTypeClear] backplane notification.
+// Publishes a [backplane.MessageTypeClear] backplane notification governed
+// by the cache's default entry options.
 func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive // flag-parameter: public API mirrors IFusionCache
 	// Clear L1: iterate and delete all entries
 	c.l1.Clear()
@@ -616,12 +609,7 @@ func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive
 		}
 	}
 
-	// Notify backplane
-	if c.bp != nil {
-		c.publishBackplane(ctx, backplane.MessageTypeClear, "", applyOptions(c.opts.DefaultEntryOptions, nil))
-	}
-
-	return nil
+	return c.publishBackplane(ctx, backplane.MessageTypeClear, "", c.opts.DefaultEntryOptions)
 }
 
 // Close shuts down background goroutines (backplane subscription) and

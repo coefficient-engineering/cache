@@ -62,6 +62,6 @@ func (c *cache) maybeStartEagerRefresh(
 			return
 		}
 		c.events.emit(EventEagerRefreshComplete{Key: key})
-		c.storeSafely(refreshCtx, key, newValue, refreshOpts)
+		_ = c.storeSafely(refreshCtx, key, newValue, refreshOpts) // background: no caller to return to
 	}()
 }
