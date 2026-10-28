@@ -40,6 +40,12 @@ func newCache(opts *Options) (*cache, error) {
 		opts.BackplaneCircuitBreakerThreshold,
 		opts.BackplaneCircuitBreakerDuration,
 	)
+	c.l2CB.onStateChange = func(open bool) {
+		c.events.emit(EventL2CircuitBreakerStateChange{Open: open})
+	}
+	c.bpCB.onStateChange = func(open bool) {
+		c.events.emit(EventBackplaneCircuitBreakerStateChange{Open: open})
+	}
 	c.bpCB.onRecovery = c.attemptAutoRecovery
 	// listen for bp invalidation messages
 	if c.bp != nil {

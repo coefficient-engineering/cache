@@ -81,10 +81,10 @@ c.Events().On(func(e cache.Event) {
 | `EventL2Hit`                              | `Key string`                               | Fresh value found in L2                             |
 | `EventL2Miss`                             | `Key string`                               | No value (or only stale value) in L2                |
 | `EventL2Error`                            | `Key string`, `Err error`                  | L2 operation failed                                 |
-| `EventL2CircuitBreakerStateChange`        | `Open bool`                                | L2 circuit breaker state changed                    |
+| `EventL2CircuitBreakerStateChange`        | `Open bool`                                | L2 breaker transitions open or returns closed after a successful probe |
 | `EventBackplaneSent`                      | `Key string`, `Type backplane.MessageType` | Message published to backplane                      |
 | `EventBackplaneReceived`                  | `Key string`, `Type backplane.MessageType` | Message received from backplane                     |
-| `EventBackplaneCircuitBreakerStateChange` | `Open bool`                                | Backplane circuit breaker state changed             |
+| `EventBackplaneCircuitBreakerStateChange` | `Open bool`                                | Backplane breaker transitions open or returns closed after a successful probe |
 
 ## Multiple handlers
 

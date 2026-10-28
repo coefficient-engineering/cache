@@ -83,6 +83,7 @@ var scenarios = map[string]func(context.Context, *report) error{
 	"shared-factory-events":   runSharedFactoryEvents,
 	"stampede":                runStampede,
 	"failsafe":                runFailSafe,
+	"breaker-events":          runBreakerEvents,
 	"lock-timeout":            runLockTimeout,
 	"skip-l2-read-when-stale": runSkipL2ReadWhenStale,
 	"tags":                    runTags,

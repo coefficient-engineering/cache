@@ -69,14 +69,14 @@ When the backplane circuit breaker transitions from open/half-open to closed (re
 
 The rationale: while the backplane was down, other nodes may have written new values. The local L1 could be stale. Clearing L1 forces the next requests to read from L2, ensuring consistency.
 
-The `onRecovery` callback is invoked in a separate goroutine to avoid blocking the operation that triggered the recovery.
+The state-change callback runs after the breaker mutex is released. Auto-recovery clears L1 synchronously after a successful half-open probe.
 
 ## Events
 
 The circuit breaker emits events on state changes:
 
-- `EventL2CircuitBreakerStateChange{Open: true}` when checked and found open.
-- `EventBackplaneCircuitBreakerStateChange{Open: true}` when checked and found open.
+- `EventL2CircuitBreakerStateChange{Open: true}` when the L2 circuit transitions from closed to open; `{Open: false}` when a successful half-open probe closes it.
+- `EventBackplaneCircuitBreakerStateChange{Open: true}` when the backplane circuit transitions from closed to open; `{Open: false}` when a successful half-open probe closes it.
 
 ## Interaction with fail-safe
 

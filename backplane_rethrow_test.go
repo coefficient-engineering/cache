@@ -3,9 +3,12 @@ package cache
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	jsonserializer "github.com/coefficient-engineering/cache/adapters/serializer/json"
 	"github.com/coefficient-engineering/cache/backplane"
 )
 
@@ -84,5 +87,112 @@ func TestMutations_SwallowBackplaneErrorUnlessSyncAndRethrow(t *testing.T) {
 				t.Fatalf("Delete error = %v, want nil", err)
 			}
 		})
+	}
+}
+
+type recoveringBackplane struct {
+	publishes atomic.Int32
+}
+
+func (b *recoveringBackplane) Publish(context.Context, backplane.Message) error {
+	if b.publishes.Add(1) == 1 {
+		return errPublish
+	}
+	return nil
+}
+
+func (*recoveringBackplane) Subscribe(backplane.Handler) (func(), error) { return func() {}, nil }
+
+func (*recoveringBackplane) Close() error { return nil }
+
+func TestBackplaneCircuitBreakerEmitsTransitions(t *testing.T) {
+	defaults := EntryOptions{Duration: time.Minute, AllowBackgroundBackplaneOperations: false}
+	bp := &recoveringBackplane{}
+	c, err := New(
+		WithBackplane(bp),
+		WithBackplaneCircuitBreaker(1, time.Millisecond),
+		WithDefaultEntryOptions(defaults),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	var mu sync.Mutex
+	var transitions []bool
+	c.Events().On(func(event Event) {
+		if change, ok := event.(EventBackplaneCircuitBreakerStateChange); ok {
+			mu.Lock()
+			transitions = append(transitions, change.Open)
+			mu.Unlock()
+		}
+	})
+	_ = c.Set(context.Background(), "breaker", "value")
+	_ = c.Set(context.Background(), "breaker", "value")
+	time.Sleep(2 * time.Millisecond)
+	_ = c.Set(context.Background(), "breaker", "value")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(transitions) != 2 || !transitions[0] || transitions[1] {
+		t.Fatalf("transitions = %v, want [true false]", transitions)
+	}
+}
+
+type recoveringL2 struct {
+	gets atomic.Int32
+}
+
+func (a *recoveringL2) Get(context.Context, string) ([]byte, error) {
+	if a.gets.Add(1) == 1 {
+		return nil, errPublish
+	}
+	return nil, nil
+}
+
+func (*recoveringL2) Set(context.Context, string, []byte, time.Duration, []string) error { return nil }
+
+func (*recoveringL2) Delete(context.Context, string) error { return nil }
+
+func (*recoveringL2) DeleteByTag(context.Context, string) error { return nil }
+
+func (*recoveringL2) Clear(context.Context) error { return nil }
+
+func (*recoveringL2) Ping(context.Context) error { return nil }
+
+func TestL2CircuitBreakerEmitsTransitions(t *testing.T) {
+	adapter := &recoveringL2{}
+	c, err := New(
+		WithL2(adapter),
+		WithSerializer(&jsonserializer.Serializer{}),
+		WithL2CircuitBreaker(1, time.Millisecond),
+		WithDefaultEntryOptions(EntryOptions{Duration: time.Minute}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	var mu sync.Mutex
+	var transitions []bool
+	c.Events().On(func(event Event) {
+		if change, ok := event.(EventL2CircuitBreakerStateChange); ok {
+			mu.Lock()
+			transitions = append(transitions, change.Open)
+			mu.Unlock()
+		}
+	})
+	_, _ = c.GetOrSet(context.Background(), "breaker", func(context.Context, *FactoryExecutionContext) (any, error) {
+		return "value", nil
+	})
+	time.Sleep(2 * time.Millisecond)
+	if _, _, err := c.Get(context.Background(), "probe"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(transitions) != 2 || !transitions[0] || transitions[1] {
+		t.Fatalf("transitions = %v, want [true false]", transitions)
 	}
 }
