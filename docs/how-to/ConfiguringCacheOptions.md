@@ -116,9 +116,11 @@ Default entry options when not overridden:
 | `AllowTimedOutFactoryBackgroundCompletion` | `true`            |
 | `AllowBackgroundBackplaneOperations`       | `true`            |
 | `ReThrowSerializationExceptions`           | `true`            |
-| `Priority`                                 | `PriorityNormal`  |
+| `Priority` (deprecated no-op)                | `PriorityNormal`  |
 
 All other fields default to their zero values.
+
+`Priority` and its values are retained for source compatibility; they are not passed to L1 adapters and have no effect.
 
 ```go
 cache.WithDefaultEntryOptions(cache.EntryOptions{

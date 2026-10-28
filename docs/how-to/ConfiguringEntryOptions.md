@@ -78,13 +78,9 @@ cache.WithEagerRefresh(0.9)
 cache.WithTags("category:electronics", "featured")
 ```
 
-### Priority and size
+### Priority (deprecated) and size
 
-**`WithPriority(p EvictionPriority)`** hints to the L1 eviction policy. Higher priority entries are evicted last. Constants: `PriorityLow` (-1), `PriorityNormal` (0), `PriorityHigh` (1), `PriorityNeverRemove` (2).
-
-```go
-cache.WithPriority(cache.PriorityHigh)
-```
+`EntryOptions.Priority`, `EvictionPriority`, its constants, and `WithPriority` are retained for source compatibility. Priority is not passed to L1 adapters and has no effect.
 
 **`WithSize(n int64)`** sets an arbitrary weight for L1 eviction decisions. Bounded L1 adapters use this; the default `sync.Map` adapter ignores it.
 
