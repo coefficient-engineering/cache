@@ -76,10 +76,11 @@ func (l *eventLog) count(name string) int {
 }
 
 var scenarios = map[string]func(context.Context, *report) error{
-	"stampede":  runStampede,
-	"failsafe":  runFailSafe,
-	"tags":      runTags,
-	"multinode": runMultiNode,
+	"backplane-rethrow": runBackplaneRethrow,
+	"stampede":          runStampede,
+	"failsafe":          runFailSafe,
+	"tags":              runTags,
+	"multinode":         runMultiNode,
 }
 
 func main() {
