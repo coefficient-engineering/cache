@@ -129,6 +129,13 @@ type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCach
 	// expiry. If fail-safe is not enabled on subsequent reads, the stale
 	// value is not returned.
 	//
+	// In L2 (unless [EntryOptions.SkipL2Write]): with fail-safe enabled the
+	// entry is rewritten as logically expired, keeping its physical expiry
+	// so it stays a fail-safe fallback on every node; without fail-safe it
+	// is deleted. The L2 call runs even while the L2 circuit breaker is open.
+	// A failed L2 call is returned under
+	// [EntryOptions.ReThrowDistributedCacheExceptions].
+	//
 	// Publishes a [backplane.MessageTypeExpire] backplane notification.
 	Expire(ctx context.Context, key string, opts ...EntryOption) error
 
@@ -566,13 +573,20 @@ func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) err
 // Expire marks the entry as logically expired without removing it from L1.
 // The value remains available as a fail-safe fallback until physical
 // expiry. If fail-safe is not enabled on subsequent reads, the stale value
-// is not returned. Publishes a [backplane.MessageTypeExpire] backplane
-// notification.
+// is not returned. In L2 (unless SkipL2Write), see expireL2: with
+// fail-safe on in opts the entry is rewritten as logically expired, with
+// fail-safe off it is deleted. Publishes a [backplane.MessageTypeExpire]
+// backplane notification, even if the L2 call failed.
 func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 	c.expireL1(c.prefixedKey(key))
 
-	return c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo)
+	var l2Err error
+	if c.l2 != nil && !eo.SkipL2Write {
+		l2Err = c.expireL2(ctx, key, eo)
+	}
+
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo))
 }
 
 // DeleteByTag removes all entries associated with tag from L1 (via the

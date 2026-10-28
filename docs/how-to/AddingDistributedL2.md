@@ -83,6 +83,15 @@ These can also be set in `EntryOptions` fields directly:
 - `AllowBackgroundDistributedCacheOperations`
 - `ReThrowDistributedCacheExceptions`
 
+## Expire with L2
+
+`Expire` also reaches L2 (unless `SkipL2Write`), so the next `GetOrSet` on any node calls the factory:
+
+- **Fail-safe on** (in the `Expire` call's entry options): the stored envelope is rewritten with logical expiry = now. Its value, tags and physical expiry are kept (the TTL becomes the time left until physical expiry), so every node can still use the old value as a fail-safe fallback.
+- **Fail-safe off:** the L2 entry is deleted, as `Delete` would.
+
+Like `Delete`, the L2 call runs even while the L2 circuit breaker is open, records its outcome in the breaker, and honours `DistributedCacheHardTimeout`.
+
 ## Error handling
 
 By default, L2 trouble never fails a call: an L2 adapter error is logged, reported as `EventL2Error`, and the cache carries on with L1 (a failed read is a miss, so `GetOrSet` calls the factory). Serialization errors are the exception: `ReThrowSerializationExceptions` defaults to `true`.
@@ -94,7 +103,7 @@ By default, L2 trouble never fails a call: an L2 adapter error is logged, report
 | `Get` | A failed L2 read, as `(nil, false, err)`. |
 | `GetOrSet` | A failed L2 read, without calling the factory and without fail-safe fallback. A failed L2 write of the factory's value is only logged; the value is returned. |
 | `Set` | A failed L2 write, unless `AllowBackgroundDistributedCacheOperations` is set (background writes are only logged). |
-| `Delete`, `DeleteByTag`, `Clear` | A failed L2 call. These always run synchronously. `Clear` uses the default entry options. |
+| `Delete`, `DeleteByTag`, `Expire`, `Clear` | A failed L2 call. These always run synchronously and are not gated by the L2 circuit breaker. `Clear` uses the default entry options. |
 
 - A `DistributedCacheHardTimeout` expiry counts as an L2 error.
 - While the L2 circuit breaker is open, `Set`, `Get` and `GetOrSet` skip L2 and return no L2 error.

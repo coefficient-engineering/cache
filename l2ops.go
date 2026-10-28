@@ -233,3 +233,64 @@ func (c *cache) loadFromL2(
 	}
 	return l2Value, nil, true, nil
 }
+
+// opExpire names Expire's L2 operation in failure reports.
+const opExpire = "expire"
+
+// expireL2 makes the L2 entry for key logically expired. With fail-safe
+// off it deletes the entry. With fail-safe on it rewrites the envelope
+// with logical expiry = now, keeping its value, tags and physical expiry
+// (the TTL becomes the time left until physical expiry), so other nodes
+// still have a fail-safe fallback. A missing or physically expired entry
+// is left alone. Unlike Set, Expire is not gated by the L2 circuit
+// breaker, so an invalidation is never silently skipped. Errors follow
+// [EntryOptions.ReThrowDistributedCacheExceptions] and, for an
+// undecodable envelope, [EntryOptions.ReThrowSerializationExceptions].
+func (c *cache) expireL2(ctx context.Context, key string, opts EntryOptions) error {
+	pk := c.prefixedKey(key)
+	if !opts.IsFailSafeEnabled {
+		if err := c.callL2(ctx, opts, func(ctx context.Context) error { return c.l2.Delete(ctx, pk) }); err != nil {
+			return c.l2Failed(ctx, opts, l2Op{name: opExpire, key: key}, err)
+		}
+		return nil
+	}
+	var data []byte
+	err := c.callL2(ctx, opts, func(ctx context.Context) error {
+		var getErr error
+		data, getErr = c.l2.Get(ctx, pk)
+		return getErr
+	})
+	if err != nil {
+		return c.l2Failed(ctx, opts, l2Op{name: opExpire, key: key}, err)
+	}
+	if data == nil {
+		return nil
+	}
+	var env l2Envelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		c.logger.Warn("cache: L2 deserialization failed",
+			slog.String("key", key),
+			slog.String("error", err.Error()),
+		)
+		if opts.ReThrowSerializationExceptions {
+			return fmt.Errorf("cache: L2 deserialization (key %q): envelope: %w", key, err)
+		}
+		return nil
+	}
+	now := c.clock.Now()
+	ttl := time.UnixMilli(env.PE).Sub(now)
+	if ttl <= 0 || env.LE <= now.UnixMilli() {
+		return nil // already gone or already expired
+	}
+	env.LE = now.UnixMilli()
+	data, err = json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("cache: L2 serialization (key %q): envelope: %w", key, err)
+	}
+	if err := c.callL2(ctx, opts, func(ctx context.Context) error {
+		return c.l2.Set(ctx, pk, data, ttl, env.Tags)
+	}); err != nil {
+		return c.l2Failed(ctx, opts, l2Op{name: opExpire, key: key}, err)
+	}
+	return nil
+}
