@@ -4,4 +4,5 @@ use (
 	.
 	./adapters/backplane/redis
 	./adapters/l2/redis
+	./scripts/verify
 )
