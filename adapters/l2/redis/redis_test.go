@@ -250,3 +250,71 @@ func TestRedisL2_TagCleanupOnOverwrite(t *testing.T) {
 		t.Fatalf("expected key to be deleted by new tag, got %v", got)
 	}
 }
+
+func TestRedisL2_DeleteByTags(t *testing.T) {
+	a, mr := setup(t)
+	ctx := context.Background()
+
+	if err := a.Set(ctx, "p1", []byte("product1"), 5*time.Minute, []string{"featured"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Set(ctx, "p2", []byte("product2"), 5*time.Minute, []string{"featured", "sale"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Set(ctx, "p3", []byte("product3"), 5*time.Minute, []string{"sale", "clothing"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Set(ctx, "p4", []byte("product4"), 5*time.Minute, []string{"clothing"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// p2 carries both tags; ghost-tag has no keys.
+	if err := a.DeleteByTags(ctx, []string{"featured", "sale", "ghost-tag"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"p1", "p2", "p3"} {
+		got, err := a.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != nil {
+			t.Fatalf("expected %s to be deleted, got %v", key, got)
+		}
+		if mr.Exists(a.tagsKey(key)) {
+			t.Fatalf("expected the tags key of %s to be deleted", key)
+		}
+	}
+	for _, tag := range []string{"featured", "sale"} {
+		if mr.Exists(a.tagSetKey(tag)) {
+			t.Fatalf("expected the %s tag set to be deleted", tag)
+		}
+	}
+
+	got, err := a.Get(ctx, "p4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected p4 to still exist")
+	}
+	// p3 was removed from the clothing tag set, which only keeps p4.
+	members, err := mr.SMembers(a.tagSetKey("clothing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0] != a.pk("p4") {
+		t.Fatalf("clothing tag set = %v, want [%s]", members, a.pk("p4"))
+	}
+}
+
+func TestRedisL2_DeleteByTags_Error(t *testing.T) {
+	a, mr := setup(t)
+	ctx := context.Background()
+
+	mr.Close()
+
+	if err := a.DeleteByTags(ctx, []string{"featured", "sale"}); err == nil {
+		t.Fatal("expected an error when Redis is unreachable")
+	}
+}

@@ -67,6 +67,9 @@ func TestL2Mutations_ReturnL2ErrorWhenSyncAndRethrow(t *testing.T) {
 		"Set":         func(c Cache) error { return c.Set(ctx, "k", "v2", rethrowL2) },
 		"Delete":      func(c Cache) error { return c.Delete(ctx, "k", rethrowL2) },
 		"DeleteByTag": func(c Cache) error { return c.DeleteByTag(ctx, "t", rethrowL2) },
+		"DeleteByTags": func(c Cache) error {
+			return c.DeleteByTags(ctx, []string{"t", "u"}, rethrowL2)
+		},
 		// Clear has no per-call options; it follows the cache defaults.
 		"Clear": func(c Cache) error { return c.Clear(ctx, true) },
 	}
@@ -127,13 +130,17 @@ func TestL2Mutations_SwallowL2ErrorUnlessRethrow(t *testing.T) {
 	if err := c.DeleteByTag(ctx, "t"); err != nil {
 		t.Fatalf("DeleteByTag error = %v, want nil", err)
 	}
+	// Both tags fail in one L2 call, which reports one error.
+	if err := c.DeleteByTags(ctx, []string{"t", "u"}); err != nil {
+		t.Fatalf("DeleteByTags error = %v, want nil", err)
+	}
 	if err := c.Clear(ctx, true); err != nil {
 		t.Fatalf("Clear error = %v, want nil", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if l2Errors != 4 {
-		t.Fatalf("EventL2Error count = %d, want 4", l2Errors)
+	if l2Errors != 5 {
+		t.Fatalf("EventL2Error count = %d, want 5", l2Errors)
 	}
 }
 

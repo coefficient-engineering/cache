@@ -53,6 +53,8 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -123,6 +125,16 @@ type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCach
 	// each removed key. A failed L2 call is returned under
 	// [EntryOptions.ReThrowDistributedCacheExceptions].
 	DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error
+
+	// DeleteByTags removes all entries associated with any of tags, as if
+	// [Cache.DeleteByTag] were called for each tag, but with a single L2
+	// call: [l2.TagsDeleter.DeleteByTags] when the adapter implements it,
+	// otherwise [l2.Adapter.DeleteByTag] once per tag. Duplicate tags are
+	// ignored, and no tags is a no-op. Publishes a
+	// [backplane.MessageTypeDelete] backplane notification for each removed
+	// key. A failed L2 call is returned under
+	// [EntryOptions.ReThrowDistributedCacheExceptions].
+	DeleteByTags(ctx context.Context, tags []string, opts ...EntryOption) error
 
 	// Expire marks the entry as logically expired without removing it from
 	// L1. The value remains available as a fail-safe fallback until physical
@@ -663,6 +675,92 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 		errs = append(errs, c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo))
 	}
 	return errors.Join(errs...)
+}
+
+// DeleteByTags removes all entries associated with any of tags from L1 (via
+// the in-memory tag index) and L2 in a single L2 call:
+// [l2.TagsDeleter.DeleteByTags] when the adapter implements it, otherwise
+// [l2.Adapter.DeleteByTag] once per tag. Duplicate tags are ignored, and no
+// tags is a no-op. Publishes a [backplane.MessageTypeDelete] backplane
+// notification for each removed key; every key is published even if the L2
+// call or an earlier publish fails, and rethrown errors are joined. An L2
+// failure report lists the first few tags; with the per-tag fallback, each
+// joined error names the tag that failed.
+func (c *cache) DeleteByTags(ctx context.Context, tags []string, opts ...EntryOption) error {
+	tags = slices.Compact(slices.Sorted(slices.Values(tags)))
+	if len(tags) == 0 {
+		return nil
+	}
+	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
+
+	// Get all L1 keys with any of the tags; a key may carry several of them.
+	var keys []string
+	for _, tag := range tags {
+		keys = append(keys, c.tagIdx.keysForTag(tag)...)
+	}
+	keys = slices.Compact(slices.Sorted(slices.Values(keys)))
+
+	// Remove from L1
+	for _, pk := range keys {
+		c.evictL1(pk)
+	}
+
+	errs := make([]error, 0, len(keys)+1)
+
+	// Remove from L2 (adapter handles its own tag bookkeeping)
+	if c.l2 != nil && !eo.SkipL2Write {
+		err := c.callL2(ctx, eo, func(ctx context.Context) error { return c.deleteL2Tags(ctx, tags) })
+		if err != nil {
+			op := l2Op{name: "delete by tags", tag: tagsSummary(tags)}
+			errs = append(errs, c.l2Failed(ctx, eo, op, err))
+		}
+	}
+
+	// Notify backplane for each removed key
+	for _, pk := range keys {
+		unprefixed := pk[len(c.opts.KeyPrefix):]
+		errs = append(errs, c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo))
+	}
+	return errors.Join(errs...)
+}
+
+// deleteL2Tags removes the L2 keys of tags with [l2.TagsDeleter] when the
+// adapter implements it, otherwise with [l2.Adapter.DeleteByTag] per tag.
+// In the fallback, every tag is tried in order until ctx is done; the
+// remaining tags are then skipped and ctx's error is reported once. Each
+// per-tag error names its tag, and the errors are joined.
+func (c *cache) deleteL2Tags(ctx context.Context, tags []string) error {
+	if deleter, ok := c.l2.(l2.TagsDeleter); ok {
+		return deleter.DeleteByTags(ctx, tags)
+	}
+	errs := make([]error, 0, len(tags))
+	for _, tag := range tags {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// Skip the remaining tags. Report ctx's error once, unless the
+			// last tag's error already does.
+			if len(errs) == 0 || !errors.Is(errs[len(errs)-1], ctxErr) {
+				errs = append(errs, ctxErr)
+			}
+			break
+		}
+		if err := c.l2.DeleteByTag(ctx, tag); err != nil {
+			errs = append(errs, fmt.Errorf("tag %q: %w", tag, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// maxSummaryTags is how many tags [tagsSummary] lists.
+const maxSummaryTags = 3
+
+// tagsSummary lists the first [maxSummaryTags] tags, joined by commas, and
+// counts the rest, so failure reports stay short however many tags a call
+// has.
+func tagsSummary(tags []string) string {
+	if len(tags) <= maxSummaryTags {
+		return strings.Join(tags, ",")
+	}
+	return fmt.Sprintf("%s (+%d more)", strings.Join(tags[:maxSummaryTags], ","), len(tags)-maxSummaryTags)
 }
 
 // Clear removes all entries from L1 and clears the tag index. When clearL2

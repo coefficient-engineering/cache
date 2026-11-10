@@ -45,6 +45,12 @@ Remove the key. Must not return an error if the key does not exist. Also clean u
 
 Remove all keys that were stored with the given tag. How tag-to-key associations are tracked is entirely up to the implementation. If tagging is not needed, implement this as a no-op returning `nil`.
 
+### Optional: `DeleteByTags(ctx context.Context, tags []string) error`
+
+Implement `l2.TagsDeleter` to remove the keys of several tags in one call, for example in one round trip. `Cache.DeleteByTags` uses it when your adapter implements it, and otherwise calls `DeleteByTag` once per tag. The tags it receives are never empty and hold no duplicates.
+
+Without it, the fallback calls `DeleteByTag` for each tag in turn, all under one `DistributedCacheHardTimeout`. A tag that fails doesn't stop the others, and its error names the tag. Once the context is done, the remaining tags are skipped and the context's error is reported once. Each tag costs at least one call to your backend, so implement `TagsDeleter` if callers delete many tags at once.
+
 ### `Clear(ctx context.Context) error`
 
 Remove all entries managed by this adapter. Implementations should scope this to a configured key prefix to avoid accidentally wiping a shared namespace.
