@@ -77,3 +77,14 @@ type Adapter interface {
 	// Used by health checks and the circuit breaker auto-recovery logic.
 	Ping(ctx context.Context) error
 }
+
+// TagsDeleter is an optional interface an [Adapter] can implement to remove
+// the keys of several tags in one call, for example with one round trip to
+// the backend. [cache.Cache.DeleteByTags] uses it when the adapter
+// implements it, and otherwise calls [Adapter.DeleteByTag] once per tag.
+type TagsDeleter interface {
+	// DeleteByTags removes all keys that were stored with any of tags, as
+	// if [Adapter.DeleteByTag] were called for each tag. tags is never
+	// empty and holds no duplicates.
+	DeleteByTags(ctx context.Context, tags []string) error
+}

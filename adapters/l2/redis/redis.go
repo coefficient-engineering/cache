@@ -4,7 +4,8 @@
 // It accepts redis.Cmdable, so it works with *redis.Client,
 // *redis.ClusterClient, and *redis.Ring. Tag tracking uses Redis SETs
 // alongside each data key.
-// DeleteByTag uses a Lua script for atomic cleanup.
+// DeleteByTag uses a Lua script for atomic cleanup, and DeleteByTags
+// pipelines that script for several tags in one round trip.
 package redis
 
 import (
@@ -205,6 +206,23 @@ func (a *Adapter) DeleteByTag(ctx context.Context, tag string) error {
 	return err
 }
 
+// DeleteByTags removes every key carrying any of tags in one round trip. It
+// pipelines the DeleteByTag script once per tag, so each tag is removed
+// atomically on a single node, as with DeleteByTag. Like DeleteByTag, the
+// script also touches keys derived from the tag set members, which may not
+// share a Redis Cluster hash slot with the tag set key.
+func (a *Adapter) DeleteByTags(ctx context.Context, tags []string) error {
+	pipe := a.client.Pipeline()
+	for _, tag := range tags {
+		deleteByTagScript.Eval(ctx, pipe, []string{a.tagSetKey(tag)}, a.keyPrefix)
+	}
+	_, err := pipe.Exec(ctx)
+	if errors.Is(err, redis.Nil) {
+		return nil // no tag set existed
+	}
+	return err
+}
+
 // Clear deletes every key under the configured prefix using SCAN. It
 // returns an error when no prefix is set, to avoid wiping a shared
 // namespace.
@@ -239,4 +257,7 @@ func (a *Adapter) Ping(ctx context.Context) error {
 	return a.client.Ping(ctx).Err()
 }
 
-var _ l2.Adapter = (*Adapter)(nil)
+var (
+	_ l2.Adapter     = (*Adapter)(nil)
+	_ l2.TagsDeleter = (*Adapter)(nil)
+)
