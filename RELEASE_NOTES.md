@@ -9,6 +9,7 @@ Requires Go 1.26 or later, unchanged from v0.4.0. The core, Redis L2 adapter, an
 - Recover missing Redis control metadata under a fresh incarnation without resurrecting old records, including ambiguous initialization outcomes and slot migration. Recovery clients do not share mutable notification-handler registries with caller clients.
 - Add application-owned Redis maintenance to reclaim invalidated unread records, including TTL-zero records. Cleanup preserves concurrent replacements and follows physical Ring shards after remapping.
 - Propagate tag invalidation to remote-only L1 entries using receiver-owned tag indexes. Cache name and key prefix isolate notifications. Coupled L1/index mutations are synchronized so concurrent retagging preserves unrelated replacements; ordinary reads remain concurrent.
+- Update dependencies to `golang.org/x/sync` v0.25.0, go-redis v9.23.0, and miniredis v2.40.0 ([#36](https://github.com/coefficient-engineering/cache/pull/36)); update the pinned `mise-action` to v5.2.5 ([#33](https://github.com/coefficient-engineering/cache/pull/33)).
 
 Resolves [#37](https://github.com/coefficient-engineering/cache/issues/37) and [#38](https://github.com/coefficient-engineering/cache/issues/38), and includes bulk invalidation from [#35](https://github.com/coefficient-engineering/cache/pull/35).
 
