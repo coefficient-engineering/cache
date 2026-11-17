@@ -36,9 +36,11 @@ Scenario code: `scripts/verify/multinode.go`. Every key and the backplane channe
 
 ## Evidence
 
-- JSON lines as for the library surface; `observed` includes the Redis key name, `EXISTS` results read directly from Redis, L2 hit and backplane-received event counts.
-- Durable side effects are checked through Redis itself (`EXISTS`), not through the cache.
+- JSON lines as for the library surface; `observed` includes the logical L2 key, opaque payload byte count, L2 hit and backplane-received event counts.
+- Durable side effects are checked through the public Redis adapter's `Get`, bypassing cache L1 and core decoding. Do not assume a raw Redis data key equals `runID+key`: the adapter uses versioned keys and wraps the opaque core envelope. Run-prefix enumeration is used only for cleanup.
 - The disposable Redis has no password; never point `REDIS_ADDR` at a shared instance with credentials in the URL.
+- Both Redis adapter constructors must succeed before creating the cache nodes. This standalone surface does not establish Cluster tag ordering or metadata-loss recovery coverage.
+- The finite-lived scenario explicitly deletes its data and run-prefixed metadata. Long-running applications instead own and cancel `RunMaintenance(ctx)` for eventual reclamation after tag invalidation/Clear, including TTL-zero data; see [Redis lifecycle](../../../how-to/AddingDistributedL2.md#redis-invalidation-and-lifecycle).
 
 ## Cleanup
 

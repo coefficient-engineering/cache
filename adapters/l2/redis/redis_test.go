@@ -14,7 +14,10 @@ func setup(t *testing.T) (*Adapter, *miniredis.Miniredis) {
 	mr := miniredis.RunT(t)
 	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { client.Close() })
-	adapter := New(client, WithKeyPrefix("test:"))
+	adapter, err := New(client, WithKeyPrefix("test:"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return adapter, mr
 }
 
@@ -252,7 +255,7 @@ func TestRedisL2_TagCleanupOnOverwrite(t *testing.T) {
 }
 
 func TestRedisL2_DeleteByTags(t *testing.T) {
-	a, mr := setup(t)
+	a, _ := setup(t)
 	ctx := context.Background()
 
 	if err := a.Set(ctx, "p1", []byte("product1"), 5*time.Minute, []string{"featured"}); err != nil {
@@ -281,14 +284,6 @@ func TestRedisL2_DeleteByTags(t *testing.T) {
 		if got != nil {
 			t.Fatalf("expected %s to be deleted, got %v", key, got)
 		}
-		if mr.Exists(a.tagsKey(key)) {
-			t.Fatalf("expected the tags key of %s to be deleted", key)
-		}
-	}
-	for _, tag := range []string{"featured", "sale"} {
-		if mr.Exists(a.tagSetKey(tag)) {
-			t.Fatalf("expected the %s tag set to be deleted", tag)
-		}
 	}
 
 	got, err := a.Get(ctx, "p4")
@@ -297,14 +292,6 @@ func TestRedisL2_DeleteByTags(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected p4 to still exist")
-	}
-	// p3 was removed from the clothing tag set, which only keeps p4.
-	members, err := mr.SMembers(a.tagSetKey("clothing"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(members) != 1 || members[0] != a.pk("p4") {
-		t.Fatalf("clothing tag set = %v, want [%s]", members, a.pk("p4"))
 	}
 }
 
@@ -316,5 +303,44 @@ func TestRedisL2_DeleteByTags_Error(t *testing.T) {
 
 	if err := a.DeleteByTags(ctx, []string{"featured", "sale"}); err == nil {
 		t.Fatal("expected an error when Redis is unreachable")
+	}
+}
+
+func TestRedisL2_ControlLossMakesOldRecordsUnreadable(t *testing.T) {
+	a, mr := setup(t)
+	ctx := context.Background()
+	if err := a.Set(ctx, "old", []byte("old-value"), 0, []string{"featured"}); err != nil {
+		t.Fatal(err)
+	}
+	mr.Del("test:fc:v2:control")
+	if value, err := a.Get(ctx, "old"); err != nil || value != nil {
+		t.Fatalf("Get after control loss = (%q, %v), want a miss", value, err)
+	}
+	if err := a.Set(ctx, "new", []byte("new-value"), 0, []string{"featured"}); err != nil {
+		t.Fatal(err)
+	}
+	if value, err := a.Get(ctx, "new"); err != nil || string(value) != "new-value" {
+		t.Fatalf("Get after recovery = (%q, %v), want new-value", value, err)
+	}
+	if value, err := a.Get(ctx, "old"); err != nil || value != nil {
+		t.Fatalf("old record after recovery = (%q, %v), want a miss", value, err)
+	}
+}
+
+func TestRedisL2_PreservesOpaqueTagBytes(t *testing.T) {
+	a, _ := setup(t)
+	ctx := t.Context()
+	tag := string([]byte{0xff, 0, 'x'})
+	if err := a.Set(ctx, "binary-tag", []byte("value"), 0, []string{tag}); err != nil {
+		t.Fatal(err)
+	}
+	if value, err := a.Get(ctx, "binary-tag"); err != nil || string(value) != "value" {
+		t.Fatalf("fresh value = (%q, %v), want value", value, err)
+	}
+	if err := a.DeleteByTag(ctx, tag); err != nil {
+		t.Fatal(err)
+	}
+	if value, err := a.Get(ctx, "binary-tag"); err != nil || value != nil {
+		t.Fatalf("invalidated value = (%q, %v), want miss", value, err)
 	}
 }

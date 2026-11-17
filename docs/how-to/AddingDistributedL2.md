@@ -44,14 +44,36 @@ redisClient := goredis.NewClient(&goredis.Options{
     Addr: "localhost:6379",
 })
 
+adapter, err := l2redis.New(redisClient, l2redis.WithKeyPrefix("myapp:"))
+if err != nil {
+    panic(err)
+}
+
 c, err := cache.New(
-    cache.WithL2(l2redis.New(redisClient, l2redis.WithKeyPrefix("myapp:"))),
+    cache.WithL2(adapter),
     cache.WithSerializer(&jsonserializer.Serializer{}),
     cache.WithKeyPrefix("myapp:"),
 )
 ```
 
-The Redis adapter accepts `redis.Cmdable`, so it works with `*redis.Client`, `*redis.ClusterClient`, and `*redis.Ring`.
+`l2redis.New` now returns `(*Adapter, error)`: this is a source-breaking constructor change, not a change to `l2.Adapter`. It validates client capabilities and maintenance configuration without Redis I/O. Native `*redis.Client` and `*redis.ClusterClient` integrations provide primary access and primary enumeration. Arbitrary `redis.Cmdable` wrappers need explicit compatible capabilities through `WithPrimaryAccess`; unsupported clients fail construction. `*redis.Ring` additionally requires `WithControlClient` with a native standalone/Cluster client for coherent metadata routing: independently remapped control state is unsafe.
+
+### Redis invalidation and lifecycle
+
+- Payloads remain distributed across Cluster shards. Every record wraps the opaque core envelope with an incarnation and Clear/tag-generation snapshots. `Get` validates those snapshots against authoritative primary metadata, including for untagged records.
+- One control hash per adapter namespace holds the generations and sequence allocator. This metadata shard is an intentional throughput hotspot; invalidation does not require co-locating all payloads.
+- `DeleteByTag`, `DeleteByTags` and `Clear` logically invalidate records without scanning/deleting their payloads in the foreground. A successful adapter invalidation hides matching Sets completed before it began from subsequent L2 reads. Overlapping Sets may survive or immediately invalidate; factory-start ordering is not guaranteed.
+- Missing/mismatched metadata fails closed. Missing control state automatically recovers with a fresh cryptographic incarnation, without changing the configured prefix. Each initialization candidate executes at most once through a non-retrying primary path; an ambiguous result requires a fresh candidate, never replaying the old initializer. Concurrent initializers adopt the winner.
+- Applications must start and own `RunMaintenance(ctx)`, cancel it on shutdown, and wait for it before closing the injected Redis client. The adapter neither starts an unowned worker nor closes that client. Maintenance sweeps immediately, then periodically; configure it with `WithMaintenanceInterval(time.Duration)` and `WithMaintenanceBatchSize(int64)` (a SCAN count hint, not a strict work limit).
+- Repeated maintenance coverage of every primary conditionally removes invalidated records without deleting concurrent replacements. `TTL=0` still means indefinite retention while valid. Invalidated, never-read records, including TTL-zero records, are eventually reclaimed only while successful maintenance coverage continues; unavailable collectors or indefinitely changing topology preclude a fixed cleanup deadline. Tag-metadata retirement can conservatively cause additional misses.
+
+An adapter error is not a successful invalidation acknowledgement. An ambiguous I/O failure may nevertheless have changed Redis; there is no rollback promise. The core's rethrow/background policy below still controls what cache callers observe. Redis acknowledged-write rollback, failover history loss, and restoring older Redis state are excluded from the no-resurrection guarantee.
+
+These guarantees concern L2 reads, not remote L1 copies. Tag invalidation currently publishes only locally known keys; remote-only L1 invalidation is tracked in [issue #38](https://github.com/coefficient-engineering/cache/issues/38).
+
+### Upgrading the Redis storage layout
+
+The adapter uses a versioned `fc:v2:` namespace beneath its configured key prefix, with encoded data keys and its own record wrapper. This is a **cold cutover**: legacy and new adapters do not share data or invalidations. Coordinate the deployment and retire legacy keys separately; do not assume mixed versions are coherent. Use adapter `Get`/`Set` for opaque L2 payloads rather than reading/writing `prefix+key` directly. Diagnostics and cleanup must account for the versioned storage namespace.
 
 ## The envelope format
 

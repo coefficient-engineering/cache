@@ -1,17 +1,17 @@
-// Package redis is an implementation of the L2 cache adapter using Redis
-// via the go-redis client library.
-//
-// It accepts redis.Cmdable, so it works with *redis.Client,
-// *redis.ClusterClient, and *redis.Ring. Tag tracking uses Redis SETs
-// alongside each data key.
-// DeleteByTag uses a Lua script for atomic cleanup, and DeleteByTags
-// pipelines that script for several tags in one round trip.
+// Package redis implements a Cluster-safe Redis L2 cache. Payloads remain
+// sharded; logical invalidation uses one authoritative generation hash.
+// Applications run maintenance explicitly to reclaim invalidated records.
 package redis
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -19,242 +19,237 @@ import (
 	"github.com/coefficient-engineering/cache/l2"
 )
 
+const (
+	storageVersion = 2
+)
+
 // Option configures an Adapter.
 type Option func(*Adapter)
 
-// WithKeyPrefix returns an Option that sets a prefix prepended to every
-// Redis key, namespacing keys to avoid collisions when multiple services
-// share the same Redis instance.
+// WithKeyPrefix isolates the adapter's versioned data and metadata namespace.
 func WithKeyPrefix(prefix string) Option {
 	return func(a *Adapter) { a.keyPrefix = prefix }
 }
 
-// WithLogger returns an Option that sets the structured logger used by the
-// Adapter.
+// WithLogger supplies the logger for recovery and maintenance diagnostics.
 func WithLogger(logger *slog.Logger) Option {
 	return func(a *Adapter) { a.logger = logger }
 }
 
-// Adapter implements l2.Adapter backed by Redis.
+// Adapter implements [l2.Adapter] and [l2.TagsDeleter]. It does not own the
+// injected clients. Metadata validation always uses primary routing.
 type Adapter struct {
-	client    redis.Cmdable
-	keyPrefix string
-	logger    *slog.Logger
+	client              redis.Cmdable
+	controlClient       redis.Cmdable
+	access              PrimaryAccess
+	controlAccess       PrimaryAccess
+	keyPrefix           string
+	logger              *slog.Logger
+	maintenanceInterval time.Duration
+	maintenanceBatch    int64
 }
 
-// New creates an Adapter backed by client and applies opts.
-//
-// client can be *redis.Client, *redis.ClusterClient, or *redis.Ring.
-// The adapter logs to a discarding [slog.Logger] unless [WithLogger]
-// overrides it.
-func New(client redis.Cmdable, opts ...Option) *Adapter {
+// New validates client capabilities without performing Redis I/O.
+// Native standalone and Cluster clients work directly. Ring requires
+// [WithControlClient]; custom wrappers require [WithPrimaryAccess].
+// The new versioned layout intentionally does not read legacy records.
+func New(client redis.Cmdable, opts ...Option) (*Adapter, error) {
 	a := &Adapter{
-		client: client,
-		logger: slog.New(slog.DiscardHandler),
+		client: client, logger: slog.New(slog.DiscardHandler),
+		maintenanceInterval: time.Minute,
+		maintenanceBatch:    defaultMaintenanceBatch,
 	}
 	for _, opt := range opts {
 		opt(a)
 	}
-	return a
+	if a.logger == nil {
+		return nil, errors.New("redis l2: logger must not be nil")
+	}
+	if a.maintenanceInterval <= 0 || a.maintenanceBatch <= 0 || a.maintenanceBatch > maximumMaintenanceBatch {
+		return nil, errors.New("redis l2: maintenance interval must be positive and batch size must be in [1, 4096]")
+	}
+	if err := a.configureAccess(); err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
-// pk returns the prefixed key for data storage.
-func (a *Adapter) pk(key string) string { return a.keyPrefix + key }
+func (a *Adapter) namespace() string  { return a.keyPrefix + "fc:v2:" }
+func (a *Adapter) controlKey() string { return a.namespace() + "control" }
+func (a *Adapter) pk(key string) string {
+	return a.namespace() + "data:" + base64.RawURLEncoding.EncodeToString([]byte(key))
+}
 
-// tagsKey returns the key that stores the set of tag names for a data key.
-// Format: {prefix}tags:{key}.
-func (a *Adapter) tagsKey(key string) string { return a.keyPrefix + "tags:" + key }
+type tagGeneration struct {
+	Tag        string `json:"t"`
+	Generation string `json:"g"`
+}
 
-// tagSetKey returns the key for the SET that tracks all data keys carrying
-// a tag. Format: {prefix}tag:{tag}.
-func (a *Adapter) tagSetKey(tag string) string { return a.keyPrefix + "tag:" + tag }
+type recordHeader struct {
+	Version     int             `json:"v"`
+	Incarnation string          `json:"i"`
+	Clear       string          `json:"c"`
+	Tags        []tagGeneration `json:"t,omitempty"`
+}
 
-// Get returns the bytes stored under key, or (nil, nil) on a miss.
+// Get returns only a record whose incarnation and every generation still
+// match authoritative metadata. Missing metadata is never a default match.
 func (a *Adapter) Get(ctx context.Context, key string) ([]byte, error) {
-	data, err := a.client.Get(ctx, a.pk(key)).Bytes()
+	data, err := a.client.Eval(ctx, "return redis.call('GET', KEYS[1])", []string{a.pk(key)}).Text()
 	if errors.Is(err, redis.Nil) {
-		return nil, nil // miss, NOT an error
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return data, nil
+	header, payload, err := decodeRecord([]byte(data))
+	if err != nil {
+		return nil, err
+	}
+	valid, err := a.validRecord(ctx, header)
+	if err != nil || !valid {
+		return nil, err
+	}
+	return payload, nil
 }
 
-// Set stores value under key with the given TTL (0 means no expiry) and
-// replaces the key's tag associations with tags. Tag bookkeeping keys get
-// twice the data TTL so they outlive the data key.
+func (a *Adapter) validRecord(ctx context.Context, header recordHeader) (bool, error) {
+	const validationArguments = 3
+	args := make([]any, validationArguments, validationArguments+2*len(header.Tags))
+	args[0], args[1], args[2] = "validate", header.Incarnation, header.Clear
+	for _, tag := range header.Tags {
+		args = append(args, tag.Tag, tag.Generation)
+	}
+	value, err := a.controlCall(ctx, args)
+	if err != nil {
+		return false, err
+	}
+	valid, ok := value.(int64)
+	if !ok {
+		return false, errors.New("redis l2: invalid metadata validation reply")
+	}
+	return valid == 1, nil
+}
+
+// Set snapshots generations once, then stores a wrapper with native Redis
+// expiry. Its data-write retries reuse identical bytes; TTL zero is infinite.
 func (a *Adapter) Set(ctx context.Context, key string, value []byte, ttl time.Duration, tags []string) error {
-	pk := a.pk(key)
-
-	// If overwriting, clean up old tag associations first.
-	a.cleanOldTags(ctx, key)
-
-	pipe := a.client.Pipeline()
-
-	// Store the data.
-	pipe.Set(ctx, pk, value, ttl)
-
-	if len(tags) > 0 {
-		// Store the list of tags associated with this key (for cleanup on Delete).
-		tagNames := make([]any, len(tags))
-		for i, t := range tags {
-			tagNames[i] = t
-		}
-		pipe.Del(ctx, a.tagsKey(key))
-		pipe.SAdd(ctx, a.tagsKey(key), tagNames...)
-		if ttl > 0 {
-			// Give the tags key a generous TTL so it outlives the data key,
-			// but still gets cleaned up eventually.
-			pipe.Expire(ctx, a.tagsKey(key), ttl*2)
-		}
-
-		// Add this key to each tag's member set.
-		for _, tag := range tags {
-			tsk := a.tagSetKey(tag)
-			pipe.SAdd(ctx, tsk, pk)
-			if ttl > 0 {
-				pipe.Expire(ctx, tsk, ttl*2)
-			}
-		}
+	tags = slices.Clone(tags)
+	for i, tag := range tags {
+		tags[i] = base64.RawURLEncoding.EncodeToString([]byte(tag))
 	}
-
-	_, err := pipe.Exec(ctx)
-	return err
-}
-
-// cleanOldTags removes the key from any tag sets it was previously
-// associated with.
-func (a *Adapter) cleanOldTags(ctx context.Context, key string) {
-	pk := a.pk(key)
-	oldTags, err := a.client.SMembers(ctx, a.tagsKey(key)).Result()
-	if err != nil || len(oldTags) == 0 {
-		return
-	}
-	pipe := a.client.Pipeline()
-	for _, tag := range oldTags {
-		pipe.SRem(ctx, a.tagSetKey(tag), pk)
-	}
-	pipe.Del(ctx, a.tagsKey(key))
-	if _, err := pipe.Exec(ctx); err != nil {
-		a.logger.Warn("redis l2: failed to clean old tags",
-			slog.String("key", key), slog.String("error", err.Error()))
-	}
-}
-
-// Delete removes key and its tag associations. A missing key is not an
-// error.
-func (a *Adapter) Delete(ctx context.Context, key string) error {
-	pk := a.pk(key)
-
-	// Read which tags this key belongs to, then clean up.
-	oldTags, _ := a.client.SMembers(ctx, a.tagsKey(key)).Result()
-
-	pipe := a.client.Pipeline()
-	pipe.Del(ctx, pk)
-	pipe.Del(ctx, a.tagsKey(key))
-	for _, tag := range oldTags {
-		pipe.SRem(ctx, a.tagSetKey(tag), pk)
-	}
-	_, err := pipe.Exec(ctx)
-	return err
-}
-
-// deleteByTagScript is a Lua script that atomically:
-// 1. Reads all data keys from the tag set
-// 2. Deletes each data key and its tags:{key} metadata key
-// 3. Deletes the tag set itself
-//
-// KEYS[1] = the tag set key (e.g., "prefix:tag:featured")
-// ARGV[1] = the key prefix (e.g., "prefix:")
-//
-// Returns the number of data keys deleted.
-var deleteByTagScript = redis.NewScript(`
-local tag_set_key = KEYS[1]
-local prefix = ARGV[1]
-
-local members = redis.call('SMEMBERS', tag_set_key)
-local deleted = 0
-
-for _, data_key in ipairs(members) do
-    local original_key = string.sub(data_key, #prefix + 1)
-    local tags_key = prefix .. 'tags:' .. original_key
-
-    -- Remove this key from ALL its associated tag sets (not just the one we're clearing)
-    local all_tags = redis.call('SMEMBERS', tags_key)
-    for _, t in ipairs(all_tags) do
-        local other_tag_set = prefix .. 'tag:' .. t
-        redis.call('SREM', other_tag_set, data_key)
-    end
-
-    redis.call('DEL', data_key)
-    redis.call('DEL', tags_key)
-    deleted = deleted + 1
-end
-
-redis.call('DEL', tag_set_key)
-return deleted
-`)
-
-// DeleteByTag atomically removes every key carrying tag, along with their
-// tag bookkeeping, using a Lua script.
-func (a *Adapter) DeleteByTag(ctx context.Context, tag string) error {
-	_, err := deleteByTagScript.Run(ctx, a.client, []string{a.tagSetKey(tag)}, a.keyPrefix).Result()
-	if errors.Is(err, redis.Nil) {
-		return nil // tag set didn't exist
-	}
-	return err
-}
-
-// DeleteByTags removes every key carrying any of tags in one round trip. It
-// pipelines the DeleteByTag script once per tag, so each tag is removed
-// atomically on a single node, as with DeleteByTag. Like DeleteByTag, the
-// script also touches keys derived from the tag set members, which may not
-// share a Redis Cluster hash slot with the tag set key.
-func (a *Adapter) DeleteByTags(ctx context.Context, tags []string) error {
-	pipe := a.client.Pipeline()
+	slices.Sort(tags)
+	tags = slices.Compact(tags)
+	args := make([]any, 1, len(tags)+1)
+	args[0] = "prepare"
 	for _, tag := range tags {
-		deleteByTagScript.Eval(ctx, pipe, []string{a.tagSetKey(tag)}, a.keyPrefix)
+		args = append(args, tag)
 	}
-	_, err := pipe.Exec(ctx)
-	if errors.Is(err, redis.Nil) {
-		return nil // no tag set existed
+	result, err := a.controlCall(ctx, args)
+	if err != nil {
+		return err
 	}
+	header, err := snapshotHeader(result, tags)
+	if err != nil {
+		return err
+	}
+	metadata, err := json.Marshal(header)
+	if err != nil {
+		return err
+	}
+	// Compact JSON contains no literal newline. A single delimiter preserves
+	// arbitrary payload bytes without base64 copies or size-narrowing casts.
+	data := make([]byte, 0, len(metadata)+1+len(value))
+	data = append(data, metadata...)
+	data = append(data, '\n')
+	data = append(data, value...)
+	return a.client.Set(ctx, a.pk(key), data, ttl).Err()
+}
+
+func snapshotHeader(value any, tags []string) (recordHeader, error) {
+	values, ok := value.([]any)
+	if !ok || len(values) != len(tags)+2 {
+		return recordHeader{}, errors.New("redis l2: invalid generation snapshot reply")
+	}
+	header := recordHeader{Version: storageVersion, Tags: make([]tagGeneration, len(tags))}
+	var valid bool
+	header.Incarnation, valid = values[0].(string)
+	if !valid {
+		return recordHeader{}, errors.New("redis l2: invalid incarnation reply")
+	}
+	header.Clear, valid = values[1].(string)
+	if !valid {
+		return recordHeader{}, errors.New("redis l2: invalid clear generation reply")
+	}
+	for i, tag := range tags {
+		generation, ok := values[i+2].(string)
+		if !ok {
+			return recordHeader{}, errors.New("redis l2: invalid tag generation reply")
+		}
+		header.Tags[i] = tagGeneration{Tag: tag, Generation: generation}
+	}
+	return header, nil
+}
+
+func decodeRecord(data []byte) (recordHeader, []byte, error) {
+	var header recordHeader
+	metadata, payload, found := bytes.Cut(data, []byte{'\n'})
+	if !found {
+		return header, nil, errors.New("redis l2: truncated record header")
+	}
+	if err := json.Unmarshal(metadata, &header); err != nil {
+		return header, nil, fmt.Errorf("redis l2: invalid record metadata: %w", err)
+	}
+	if header.Version != storageVersion || len(header.Incarnation) != 2*incarnationBytes || header.Clear == "" {
+		return header, nil, errors.New("redis l2: invalid record version or generation")
+	}
+	for _, tag := range header.Tags {
+		if tag.Generation == "" {
+			return header, nil, errors.New("redis l2: empty tag generation")
+		}
+	}
+	return header, payload, nil
+}
+
+// Delete removes one payload. Its former generation snapshots need no
+// reverse-index bookkeeping; maintenance retires unused metadata.
+func (a *Adapter) Delete(ctx context.Context, key string) error {
+	return a.client.Del(ctx, a.pk(key)).Err()
+}
+
+// DeleteByTag logically invalidates a tag without enumerating payloads.
+func (a *Adapter) DeleteByTag(ctx context.Context, tag string) error {
+	return a.DeleteByTags(ctx, []string{tag})
+}
+
+// DeleteByTags mutates the shared metadata key. Failed operations may have
+// partial effects; retries only advance generations, never restore them.
+func (a *Adapter) DeleteByTags(ctx context.Context, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	args := make([]any, 1, len(tags)+1)
+	args[0] = "invalidate"
+	for _, tag := range tags {
+		args = append(args, base64.RawURLEncoding.EncodeToString([]byte(tag)))
+	}
+	_, err := a.controlCall(ctx, args)
 	return err
 }
 
-// Clear deletes every key under the configured prefix using SCAN. It
-// returns an error when no prefix is set, to avoid wiping a shared
-// namespace.
+// Clear logically invalidates every record, including untagged records,
+// in this adapter namespace. Maintenance reclaims the old bytes.
 func (a *Adapter) Clear(ctx context.Context) error {
-	if a.keyPrefix == "" {
-		return errors.New("redis l2: Clear requires a key prefix to avoid wiping shared namespaces")
-	}
-
-	// SCAN-based deletion scoped to our key prefix.
-	var cursor uint64
-	pattern := a.keyPrefix + "*"
-	for {
-		keys, nextCursor, err := a.client.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return err
-		}
-		if len(keys) > 0 {
-			if err := a.client.Del(ctx, keys...).Err(); err != nil {
-				return err
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-	return nil
+	_, err := a.controlCall(ctx, []any{"clear"})
+	return err
 }
 
-// Ping checks that Redis is reachable.
+// Ping checks that the payload and control backends are reachable.
 func (a *Adapter) Ping(ctx context.Context) error {
-	return a.client.Ping(ctx).Err()
+	if err := a.client.Ping(ctx).Err(); err != nil {
+		return err
+	}
+	return a.controlClient.Ping(ctx).Err()
 }
 
 var (

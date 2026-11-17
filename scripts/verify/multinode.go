@@ -25,22 +25,27 @@ const (
 type node struct {
 	cache  cache.Cache
 	client *redis.Client
+	l2     *redisl2.Adapter
 	events *eventLog
 }
 
 func newNode(addr, runID, nodeID string) (*node, error) {
 	client := redis.NewClient(&redis.Options{Addr: addr})
+	adapter, err := redisl2.New(client, redisl2.WithKeyPrefix(runID))
+	if err != nil {
+		return nil, errors.Join(err, client.Close())
+	}
 	c, err := cache.New(
 		cache.WithCacheName("verify"),
 		cache.WithNodeID(nodeID),
-		cache.WithL2(redisl2.New(client, redisl2.WithKeyPrefix(runID))),
+		cache.WithL2(adapter),
 		cache.WithSerializer(&json.Serializer{}),
 		cache.WithBackplane(redisbp.New(client, redisbp.WithChannel(runID+"backplane"), redisbp.WithNodeID(nodeID))),
 	)
 	if err != nil {
 		return nil, errors.Join(err, client.Close())
 	}
-	n := &node{cache: c, client: client, events: &eventLog{}}
+	n := &node{cache: c, client: client, l2: adapter, events: &eventLog{}}
 	n.events.attach(c)
 	return n, nil
 }
@@ -78,17 +83,17 @@ func runMultiNode(ctx context.Context, r *report) error {
 }
 
 // stepSharedL2: node A writes, Redis holds the key, node B reads it via L2.
-func stepSharedL2(ctx context.Context, r *report, a, b *node, runID string) error {
+func stepSharedL2(ctx context.Context, r *report, a, b *node, _ string) error {
 	if err := a.cache.Set(ctx, multiNodeKey, "v1"); err != nil {
 		return err
 	}
-	exists, err := a.client.Exists(ctx, runID+multiNodeKey).Result()
+	payload, err := a.l2.Get(ctx, multiNodeKey)
 	if err != nil {
 		return err
 	}
 	r.record(check{
-		Name: "l2-key-written-to-redis", OK: exists == 1,
-		Observed: map[string]any{"redis_key": runID + multiNodeKey, "exists": exists},
+		Name: "l2-key-written-to-redis", OK: len(payload) > 0,
+		Observed: map[string]any{"l2_key": multiNodeKey, "payload_bytes": len(payload)},
 	})
 
 	got, ok, err := cache.Get[string](ctx, b.cache, multiNodeKey)
@@ -114,18 +119,18 @@ func stepUpdatePropagates(ctx context.Context, r *report, a, b *node, _ string) 
 }
 
 // stepDeletePropagates: node A deletes; node B and Redis no longer have it.
-func stepDeletePropagates(ctx context.Context, r *report, a, b *node, runID string) error {
+func stepDeletePropagates(ctx context.Context, r *report, a, b *node, _ string) error {
 	if err := a.cache.Delete(ctx, multiNodeKey); err != nil {
 		return err
 	}
 	_, found := waitFor(ctx, b.cache, func(_ string, found bool) bool { return !found })
-	exists, err := a.client.Exists(ctx, runID+multiNodeKey).Result()
+	payload, err := a.l2.Get(ctx, multiNodeKey)
 	if err != nil {
 		return err
 	}
 	r.record(check{
-		Name: "delete-propagates-to-node-b-and-redis", OK: !found && exists == 0,
-		Observed: map[string]any{"node_b_found": found, "redis_exists": exists},
+		Name: "delete-propagates-to-node-b-and-redis", OK: !found && payload == nil,
+		Observed: map[string]any{"node_b_found": found, "redis_found": payload != nil},
 	})
 	return nil
 }

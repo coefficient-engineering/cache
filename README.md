@@ -83,10 +83,13 @@ func main() {
 
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 
-	l2 := redisl2.New(rdb,
+	l2, err := redisl2.New(rdb,
 		redisl2.WithKeyPrefix("myapp:"),
 		redisl2.WithLogger(slog.Default()),
 	)
+	if err != nil {
+		panic(err)
+	}
 
 	bp := redisbp.New(rdb,
 		redisbp.WithChannel("myapp:backplane"),

@@ -70,9 +70,13 @@ func runL2Rethrow(ctx context.Context, r *report) error {
 // newRedisL2Cache builds a cache over a Redis L2 at addr.
 func newRedisL2Cache(addr, runID string, opts ...cache.Option) (cache.Cache, *redis.Client, error) {
 	client := redis.NewClient(&redis.Options{Addr: addr})
+	adapter, err := redisl2.New(client, redisl2.WithKeyPrefix(runID))
+	if err != nil {
+		return nil, nil, errors.Join(err, client.Close())
+	}
 	opts = append([]cache.Option{
 		cache.WithCacheName("verify"),
-		cache.WithL2(redisl2.New(client, redisl2.WithKeyPrefix(runID))),
+		cache.WithL2(adapter),
 		cache.WithSerializer(&jsonserializer.Serializer{}),
 	}, opts...)
 	c, err := cache.New(opts...)
@@ -183,7 +187,11 @@ func stepSerialization(ctx context.Context, r *report, addr, runID string) error
 		Observed: map[string]any{errorKey: errString(err), "logLines": strings.Count(logs.String(), "L2 serialization failed")},
 	})
 
-	if err := client.Set(ctx, runID+"bad", "not an envelope", time.Minute).Err(); err != nil {
+	adapter, err := redisl2.New(client, redisl2.WithKeyPrefix(runID))
+	if err != nil {
+		return err
+	}
+	if err := adapter.Set(ctx, "bad", []byte("not an envelope"), time.Minute, nil); err != nil {
 		return err
 	}
 	_, ok, err := c.Get(ctx, "bad")
@@ -202,12 +210,12 @@ func stepSerialization(ctx context.Context, r *report, addr, runID string) error
 	})
 
 	v, err := c.GetOrSet(ctx, "bad", factory, noSerializationRethrow)
-	stored, redisErr := client.Get(ctx, runID+"bad").Result()
+	stored, redisErr := adapter.Get(ctx, "bad")
 	r.record(check{
 		Name: "no-rethrow-getorset-treats-corrupt-entry-as-miss",
-		OK:   err == nil && v == freshValue && calls == 1 && redisErr == nil && strings.Contains(stored, `"le"`),
+		OK:   err == nil && v == freshValue && calls == 1 && redisErr == nil && bytes.Contains(stored, []byte(`"le"`)),
 		Observed: map[string]any{
-			valueKey: v, errorKey: errString(err), factoryCallsKey: calls, "redisValue": stored,
+			valueKey: v, errorKey: errString(err), factoryCallsKey: calls, "redisValue": string(stored),
 		},
 	})
 	return nil

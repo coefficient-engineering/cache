@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/coefficient-engineering/cache"
+	redisl2 "github.com/coefficient-engineering/cache/adapters/l2/redis"
 )
 
 // runExpireL2 proves Expire reaches a shared Redis L2: another node's next
@@ -40,17 +42,22 @@ func runExpireL2(ctx context.Context, r *report) error {
 	defer func() { _ = bClient.Close() }()
 	defer func() { _ = b.Close() }()
 
-	nodes := expireNodes{a: a, b: b, client: client, runID: runID}
+	adapter, err := redisl2.New(client, redisl2.WithKeyPrefix(runID))
+	if err != nil {
+		return err
+	}
+	nodes := expireNodes{a: a, b: b, client: client, l2: adapter, runID: runID}
 	if err := stepExpireFailSafe(ctx, r, nodes); err != nil {
 		return err
 	}
 	return stepExpireNoFailSafe(ctx, r, nodes)
 }
 
-// expireNodes are two caches sharing one Redis L2, plus a raw client.
+// expireNodes are two caches sharing one Redis L2, plus diagnostic access.
 type expireNodes struct {
 	a, b   cache.Cache
 	client *redis.Client
+	l2     *redisl2.Adapter
 	runID  string
 }
 
@@ -65,15 +72,22 @@ func stepExpireFailSafe(ctx context.Context, r *report, n expireNodes) error {
 	if err := a.Set(ctx, "fs", "old"); err != nil {
 		return err
 	}
-	ttlBefore := client.TTL(ctx, runID+"fs").Val()
+	// Native TTL diagnostics use the adapter's versioned physical layout.
+	physicalKey := runID + "fc:v2:data:" + base64.RawURLEncoding.EncodeToString([]byte("fs"))
+	ttlBefore := client.TTL(ctx, physicalKey).Val()
 	err := a.Expire(ctx, "fs")
-	raw := client.Get(ctx, runID+"fs").Val()
+	raw, readErr := n.l2.Get(ctx, "fs")
+	if readErr != nil {
+		return readErr
+	}
 	var env struct {
 		LE int64 `json:"le"`
 		PE int64 `json:"pe"`
 	}
-	_ = json.Unmarshal([]byte(raw), &env)
-	ttlAfter := client.TTL(ctx, runID+"fs").Val()
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return err
+	}
+	ttlAfter := client.TTL(ctx, physicalKey).Val()
 	r.record(check{
 		Name:     "failsafe-expire-rewrites-redis-envelope",
 		OK:       err == nil && env.LE <= time.Now().UnixMilli() && env.PE > time.Now().Add(minRemaining).UnixMilli() && ttlAfter > minRemaining,
@@ -112,7 +126,9 @@ func stepExpireNoFailSafe(ctx context.Context, r *report, n expireNodes) error {
 		return err
 	}
 	err := a.Expire(ctx, "plain", noFailSafe)
-	exists := client.Exists(ctx, runID+"plain").Val()
+	// Physical deletion is a diagnostic, not a raw-payload decoding path.
+	physicalKey := runID + "fc:v2:data:" + base64.RawURLEncoding.EncodeToString([]byte("plain"))
+	exists := client.Exists(ctx, physicalKey).Val()
 	r.record(check{Name: "no-failsafe-expire-deletes-redis-key", OK: err == nil && exists == 0, Observed: map[string]any{errorKey: errString(err), "exists": exists}})
 
 	v, err := b.GetOrSet(ctx, "plain", factory, noFailSafe)

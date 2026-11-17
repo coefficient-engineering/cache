@@ -5,7 +5,8 @@
 //
 // Scenarios: stampede, failsafe, tags, shared-factory-events, breaker-events,
 // lock-timeout, skip-l2-read-when-stale (L1 or in-memory L2); multinode,
-// backplane-rethrow, l2-rethrow, expire-l2, l2-soft-timeout (need REDIS_ADDR).
+// backplane-rethrow, l2-rethrow, expire-l2, l2-soft-timeout (need REDIS_ADDR);
+// cluster-tags (needs REDIS_CLUSTER_ADDRS, optional REDIS_CLUSTER_DIAL_MAP).
 // Exit status is 0 only when every check in the scenario holds.
 package main
 
@@ -83,6 +84,7 @@ func (l *eventLog) count(name string) int {
 
 var scenarios = map[string]func(context.Context, *report) error{
 	"backplane-rethrow":       runBackplaneRethrow,
+	"cluster-tags":            runClusterTags,
 	"shared-factory-events":   runSharedFactoryEvents,
 	"stampede":                runStampede,
 	"failsafe":                runFailSafe,
