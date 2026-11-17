@@ -5,9 +5,9 @@ module github.com/coefficient-engineering/cache/scripts/verify
 go 1.26.0
 
 require (
-	github.com/coefficient-engineering/cache v0.2.0
-	github.com/coefficient-engineering/cache/adapters/backplane/redis v0.2.0
-	github.com/coefficient-engineering/cache/adapters/l2/redis v0.2.0
+	github.com/coefficient-engineering/cache v0.5.0
+	github.com/coefficient-engineering/cache/adapters/backplane/redis v0.5.0
+	github.com/coefficient-engineering/cache/adapters/l2/redis v0.5.0
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
