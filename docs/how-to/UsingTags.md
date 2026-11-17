@@ -38,7 +38,7 @@ To invalidate several tags at once, use `DeleteByTags`:
 err := c.DeleteByTags(ctx, []string{"category:electronics", "featured"})
 ```
 
-It removes every entry carrying any of the tags, as if `DeleteByTag` were called for each one, but with a single L2 call. Duplicate tags are ignored, and an empty slice is a no-op.
+It removes every entry carrying any of the tags, as if `DeleteByTag` were called for each one. Duplicate tags are ignored, and an empty slice is a no-op. L2 work shares one hard timeout and one circuit breaker record; backend round trips depend on adapter support.
 
 ## How tag tracking works
 
@@ -56,6 +56,12 @@ When `DeleteByTag` is called, the cache:
 3. Publishes a `MessageTypeDelete` backplane message for each removed key.
 
 `DeleteByTags` follows the same steps for all its tags. For L2 it calls `l2.TagsDeleter.DeleteByTags(ctx, tags)` when the adapter implements that optional interface, and otherwise `l2.Adapter.DeleteByTag` once per tag. Either way the L2 work runs under one `DistributedCacheHardTimeout` and counts as one call for the L2 circuit breaker. The Redis L2 adapter implements `TagsDeleter` by pipelining its `DeleteByTag` script for every tag in one round trip.
+
+Fallback failure reports show the first three failed tags and count the remaining failures. All underlying errors, including those omitted from the text, remain available through `errors.Is` and `errors.As`.
+
+### Compatibility
+
+Existing `l2.Adapter` implementations need no changes: `l2.TagsDeleter` is an optional batching capability. Adapters without it retain their existing `DeleteByTag` behavior, including any lack of tag support. Custom implementations and generated mocks of the `Cache` interface must add the new `DeleteByTags` method.
 
 ## Tags as a default
 

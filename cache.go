@@ -127,10 +127,10 @@ type Cache interface { //nolint:interfacebloat // public API mirrors IFusionCach
 	DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error
 
 	// DeleteByTags removes all entries associated with any of tags, as if
-	// [Cache.DeleteByTag] were called for each tag, but with a single L2
-	// call: [l2.TagsDeleter.DeleteByTags] when the adapter implements it,
-	// otherwise [l2.Adapter.DeleteByTag] once per tag. Duplicate tags are
-	// ignored, and no tags is a no-op. Publishes a
+	// [Cache.DeleteByTag] were called for each tag. L2 work shares one hard
+	// timeout and circuit breaker record: [l2.TagsDeleter.DeleteByTags]
+	// when supported, otherwise [l2.Adapter.DeleteByTag] once per tag.
+	// Duplicate tags are ignored, and no tags is a no-op. Publishes a
 	// [backplane.MessageTypeDelete] backplane notification for each removed
 	// key. A failed L2 call is returned under
 	// [EntryOptions.ReThrowDistributedCacheExceptions].
@@ -678,14 +678,15 @@ func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption
 }
 
 // DeleteByTags removes all entries associated with any of tags from L1 (via
-// the in-memory tag index) and L2 in a single L2 call:
+// the in-memory tag index) and L2 under one shared hard timeout:
 // [l2.TagsDeleter.DeleteByTags] when the adapter implements it, otherwise
 // [l2.Adapter.DeleteByTag] once per tag. Duplicate tags are ignored, and no
 // tags is a no-op. Publishes a [backplane.MessageTypeDelete] backplane
 // notification for each removed key; every key is published even if the L2
 // call or an earlier publish fails, and rethrown errors are joined. An L2
-// failure report lists the first few tags; with the per-tag fallback, each
-// joined error names the tag that failed.
+// failure report lists the first few tags and fallback errors, counting
+// the rest; all underlying errors remain available to [errors.Is] and
+// [errors.As].
 func (c *cache) DeleteByTags(ctx context.Context, tags []string, opts ...EntryOption) error {
 	tags = slices.Compact(slices.Sorted(slices.Values(tags)))
 	if len(tags) == 0 {
@@ -728,7 +729,8 @@ func (c *cache) DeleteByTags(ctx context.Context, tags []string, opts ...EntryOp
 // adapter implements it, otherwise with [l2.Adapter.DeleteByTag] per tag.
 // In the fallback, every tag is tried in order until ctx is done; the
 // remaining tags are then skipped and ctx's error is reported once. Each
-// per-tag error names its tag, and the errors are joined.
+// per-tag error names its tag. Only the first few failures are rendered,
+// but all errors remain available through unwrapping.
 func (c *cache) deleteL2Tags(ctx context.Context, tags []string) error {
 	if deleter, ok := c.l2.(l2.TagsDeleter); ok {
 		return deleter.DeleteByTags(ctx, tags)
@@ -747,10 +749,28 @@ func (c *cache) deleteL2Tags(ctx context.Context, tags []string) error {
 			errs = append(errs, fmt.Errorf("tag %q: %w", tag, err))
 		}
 	}
+	if len(errs) > maxSummaryTags {
+		return &tagDeletionError{
+			summary: fmt.Sprintf("%s\n(+%d more errors)",
+				errors.Join(errs[:maxSummaryTags]...).Error(), len(errs)-maxSummaryTags),
+			causes: errs,
+		}
+	}
 	return errors.Join(errs...)
 }
 
-// maxSummaryTags is how many tags [tagsSummary] lists.
+// tagDeletionError bounds rendered fallback details without discarding
+// causes callers may inspect with [errors.Is] or [errors.As].
+type tagDeletionError struct {
+	summary string
+	causes  []error
+}
+
+func (e *tagDeletionError) Error() string { return e.summary }
+
+func (e *tagDeletionError) Unwrap() []error { return e.causes }
+
+// maxSummaryTags bounds the tags and fallback errors listed in reports.
 const maxSummaryTags = 3
 
 // tagsSummary lists the first [maxSummaryTags] tags, joined by commas, and

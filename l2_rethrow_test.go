@@ -144,6 +144,66 @@ func TestL2Mutations_SwallowL2ErrorUnlessRethrow(t *testing.T) {
 	}
 }
 
+func TestDeleteByTags_BoundsFallbackFailureReports(t *testing.T) {
+	logs := &syncBuffer{}
+	failures := map[string]error{
+		"a": errors.New("backend failure a"),
+		"b": errors.New("backend failure b"),
+		"c": errors.New("backend failure c"),
+		"d": errors.New("backend failure d"),
+		"e": &time.ParseError{Layout: "2006", Value: "invalid"},
+	}
+	adapter := &fallbackL2{Adapter: memoryl2.New()}
+	adapter.onTag = func(_ context.Context, tag string) error { return failures[tag] }
+	c, _ := newTestCache(t,
+		WithL2(adapter),
+		WithSerializer(&jsonserializer.Serializer{}),
+		WithLogger(slog.New(slog.NewJSONHandler(logs, nil))),
+	)
+	var eventErr error
+	c.Events().On(func(event Event) {
+		if event, ok := event.(EventL2Error); ok {
+			eventErr = event.Err
+		}
+	})
+
+	err := c.DeleteByTags(context.Background(), []string{"a", "b", "c", "d", "e"}, rethrowL2)
+	if err == nil || eventErr == nil {
+		t.Fatalf("returned error = %v, event error = %v; want both", err, eventErr)
+	}
+	var record struct {
+		Error string `json:"error"`
+	}
+	if decodeErr := json.Unmarshal([]byte(logs.String()), &record); decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	for name, report := range map[string]string{
+		"returned": err.Error(),
+		"event":    eventErr.Error(),
+		"log":      record.Error,
+	} {
+		if n := strings.Count(report, `": `); n != 3 {
+			t.Errorf("%s report contains %d tag errors, want 3: %s", name, n, report)
+		}
+		if !strings.Contains(report, "(+2 more errors)") {
+			t.Errorf("%s report omits the remaining error count: %s", name, report)
+		}
+		if strings.Contains(report, "backend failure d") {
+			t.Errorf("%s report includes a failure beyond the limit: %s", name, report)
+		}
+	}
+	for name, reported := range map[string]error{"returned": err, "event": eventErr} {
+		for tag, failure := range failures {
+			if !errors.Is(reported, failure) {
+				t.Errorf("%s error lost the failure for tag %s", name, tag)
+			}
+		}
+		if _, ok := errors.AsType[*time.ParseError](reported); !ok {
+			t.Errorf("%s error lost the omitted typed failure", name)
+		}
+	}
+}
+
 func TestSet_BackgroundL2WriteNeverReturnsL2Error(t *testing.T) {
 	c := newFailingL2Cache(t)
 	if err := c.Set(context.Background(), "k", "v", rethrowL2, WithBackgroundL2Ops()); err != nil {

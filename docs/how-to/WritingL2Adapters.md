@@ -49,7 +49,9 @@ Remove all keys that were stored with the given tag. How tag-to-key associations
 
 Implement `l2.TagsDeleter` to remove the keys of several tags in one call, for example in one round trip. `Cache.DeleteByTags` uses it when your adapter implements it, and otherwise calls `DeleteByTag` once per tag. The tags it receives are never empty and hold no duplicates.
 
-Without it, the fallback calls `DeleteByTag` for each tag in turn, all under one `DistributedCacheHardTimeout`. A tag that fails doesn't stop the others, and its error names the tag. Once the context is done, the remaining tags are skipped and the context's error is reported once. Each tag costs at least one call to your backend, so implement `TagsDeleter` if callers delete many tags at once.
+Without it, the fallback calls `DeleteByTag` for each tag in turn, all under one `DistributedCacheHardTimeout`. A tag that fails doesn't stop the others. Failure reports name the first three failed tags and count the remaining errors; all causes remain available through `errors.Is` and `errors.As`. Once the context is done, the remaining tags are skipped and the context error is included once. Each tag still invokes your adapter separately, so implement `TagsDeleter` to batch backend calls.
+
+The interface is optional to preserve source compatibility with existing L2 adapters, mocks, and wrappers. A wrapper embedding `l2.Adapter` must explicitly implement `DeleteByTags` to preserve batching. A wrapper embedding a concrete adapter that implements `TagsDeleter` inherits that method: override it too if your `DeleteByTag` override applies tag rewriting, access checks, or other behavior that bulk deletion must also enforce.
 
 ### `Clear(ctx context.Context) error`
 
