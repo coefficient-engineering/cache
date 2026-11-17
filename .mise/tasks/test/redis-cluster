@@ -21,8 +21,11 @@ trap 'exit 143' TERM
 # Random loopback host ports avoid collisions between concurrent runs. All three
 # servers share one network namespace, so their advertised loopback addresses
 # remain reachable to one another; the Go dialer translates them for the host.
+# Cluster configuration is disposable. Keep synchronous SETSLOT persistence off
+# the Docker host filesystem so storage stalls cannot trigger heartbeat loss.
 container="$(docker run -d --rm \
   -p 127.0.0.1::7000 -p 127.0.0.1::7001 -p 127.0.0.1::7002 \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
   redis:7-alpine sh -ec '
     for port in 7000 7001 7002; do
       mkdir -p "/tmp/redis-$port"

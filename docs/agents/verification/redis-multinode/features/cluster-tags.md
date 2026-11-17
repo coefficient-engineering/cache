@@ -10,11 +10,14 @@ This scenario uses two independent native go-redis Cluster clients and the Redis
 
 Use Bash, Docker, and the repository's Go toolchain. A standalone Redis from the surface README is **not** sufficient. From the repository root, launch the same Redis 7 three-primary topology used by `mise run test:redis-cluster`, with random loopback host ports and translated advertised addresses:
 
+Cluster configuration is disposable and stored on tmpfs. This avoids coupling synchronous slot-configuration persistence to Docker host filesystem latency.
+
 ```bash
 set -euo pipefail
 name=cache-verify-cluster-$$
 docker run -d --rm --name "$name" \
   -p 127.0.0.1::7000 -p 127.0.0.1::7001 -p 127.0.0.1::7002 \
+  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
   redis:7-alpine sh -ec '
     for port in 7000 7001 7002; do
       mkdir -p "/tmp/redis-$port"
