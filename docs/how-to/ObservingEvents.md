@@ -82,9 +82,11 @@ c.Events().On(func(e cache.Event) {
 | `EventL2Miss`                             | `Key string`                               | No value (or only stale value) in L2                |
 | `EventL2Error`                            | `Key string`, `Err error`                  | L2 operation failed                                 |
 | `EventL2CircuitBreakerStateChange`        | `Open bool`                                | L2 breaker transitions open or returns closed after a successful probe |
-| `EventBackplaneSent`                      | `Key string`, `Type backplane.MessageType` | Message published to backplane                      |
-| `EventBackplaneReceived`                  | `Key string`, `Type backplane.MessageType` | Message received from backplane                     |
+| `EventBackplaneSent`                      | `Key string`, `Type backplane.MessageType` | Transport publish succeeded; not a remote-processing acknowledgement |
+| `EventBackplaneReceived`                  | `Key string`, `Type backplane.MessageType` | After the receiving node processes the message locally |
 | `EventBackplaneCircuitBreakerStateChange` | `Open bool`                                | Backplane breaker transitions open or returns closed after a successful probe |
+
+`EventBackplaneReceived` can act as a deterministic receipt barrier for that receiver's local invalidation. It is not an all-node acknowledgement or a fence against concurrent/later writes. Tag-level (`MessageTypeDeleteByTags`) events have an empty `Key`; the event does not carry the message's tags.
 
 ## Multiple handlers
 

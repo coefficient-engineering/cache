@@ -12,32 +12,29 @@ import (
 // publish error only when the publish ran synchronously and
 // ReThrowBackplaneExceptions is set; otherwise failures are logged and nil
 // is returned.
-func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageType, key string, opts EntryOptions) error {
+func (c *cache) publishBackplane(ctx context.Context, msg backplane.Message, opts EntryOptions) error {
 	if c.bp == nil || opts.SkipBackplaneNotifications {
 		return nil
 	}
 	if c.bpCB.IsOpen() {
 		return nil // circuit breaker open
 	}
-	msg := backplane.Message{
-		Type:      msgType,
-		CacheName: c.opts.CacheName,
-		Key:       key,
-		SourceID:  c.opts.NodeID,
-	}
+	msg.CacheName = c.opts.CacheName
+	msg.KeyPrefix = c.opts.KeyPrefix
+	msg.SourceID = c.opts.NodeID
 
 	doPublish := func() error {
 		err := c.bp.Publish(ctx, msg)
 		c.bpCB.Record(err)
 		if err != nil {
 			c.logger.Warn("cache: backplane publish failed",
-				slog.String("key", key),
-				slog.String("type", fmt.Sprintf("%d", msgType)),
+				slog.String("key", msg.Key),
+				slog.String("type", fmt.Sprintf("%d", msg.Type)),
 				slog.String("error", err.Error()),
 			)
-			return fmt.Errorf("cache: backplane publish (type %d, key %q): %w", msgType, key, err)
+			return fmt.Errorf("cache: backplane publish (type %d, key %q): %w", msg.Type, msg.Key, err)
 		}
-		c.events.emit(EventBackplaneSent{Key: key, Type: msgType})
+		c.events.emit(EventBackplaneSent{Key: msg.Key, Type: msg.Type})
 		return nil
 	}
 	if opts.AllowBackgroundBackplaneOperations {
@@ -52,8 +49,8 @@ func (c *cache) publishBackplane(ctx context.Context, msgType backplane.MessageT
 
 // handleBackplaneMessage processes an incoming backplane message.
 func (c *cache) handleBackplaneMessage(msg backplane.Message) {
-	// only process messages for our cache name
-	if msg.CacheName != c.opts.CacheName {
+	// A cache name and key prefix together identify one L1 namespace.
+	if msg.CacheName != c.opts.CacheName || msg.KeyPrefix != c.opts.KeyPrefix {
 		return
 	}
 	// ignore msgs from ourselves
@@ -64,7 +61,6 @@ func (c *cache) handleBackplaneMessage(msg backplane.Message) {
 	if c.opts.IgnoreIncomingBackplaneNotifications {
 		return
 	}
-	c.events.emit(EventBackplaneReceived{Key: msg.Key, Type: msg.Type})
 
 	switch msg.Type {
 	case backplane.MessageTypeSet, backplane.MessageTypeDelete:
@@ -75,10 +71,15 @@ func (c *cache) handleBackplaneMessage(msg backplane.Message) {
 	case backplane.MessageTypeExpire:
 		c.expireL1(c.prefixedKey(msg.Key))
 
+	case backplane.MessageTypeDeleteByTags:
+		c.evictL1Tags(msg.Tags)
+
 	case backplane.MessageTypeClear:
 		c.l1.Clear()
 		c.tagIdx.clear()
 	}
+	// Observers can use receipt as a barrier: local invalidation is complete.
+	c.events.emit(EventBackplaneReceived{Key: msg.Key, Type: msg.Type})
 }
 
 func (c *cache) attemptAutoRecovery() {

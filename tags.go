@@ -1,6 +1,9 @@
 package cache
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 type tagIndex struct {
 	mu    sync.RWMutex
@@ -57,4 +60,15 @@ func (ti *tagIndex) clear() {
 	ti.mu.Lock()
 	defer ti.mu.Unlock()
 	ti.index = nil
+}
+
+// evictL1Tags uses this node's index, never the sender's knowledge of keys.
+func (c *cache) evictL1Tags(tags []string) {
+	for _, tag := range tags {
+		for _, pk := range c.tagIdx.keysForTag(tag) {
+			if entry, ok := c.l1Entry(pk); ok && slices.Contains(entry.tags, tag) {
+				c.evictL1(pk)
+			}
+		}
+	}
 }

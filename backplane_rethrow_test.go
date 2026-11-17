@@ -199,3 +199,17 @@ func TestL2CircuitBreakerEmitsTransitions(t *testing.T) {
 		t.Fatalf("transitions = %v, want [true false]", transitions)
 	}
 }
+
+func TestTagInvalidation_ReturnsPublishErrorWithoutLocalEntries(t *testing.T) {
+	for name, invalidate := range map[string]func(Cache) error{
+		"single": func(c Cache) error { return c.DeleteByTag(t.Context(), "remote-only", syncRethrow) },
+		"batch":  func(c Cache) error { return c.DeleteByTags(t.Context(), []string{"remote-only", "other"}, syncRethrow) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := newTestCache(t, WithBackplane(failingBackplane{}))
+			if err := invalidate(c); !errors.Is(err, errPublish) {
+				t.Fatalf("invalidation with an empty local index = %v, want %v", err, errPublish)
+			}
+		})
+	}
+}

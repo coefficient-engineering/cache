@@ -19,6 +19,8 @@ A hybrid L1+L2 cache for Go, ported from [FusionCache](https://github.com/ZiggyC
 - Type-safe generic helpers (`GetOrSet[T]`, `Get[T]`)
 - Every pluggable point is a pure interface; bring your own adapters
 
+Tag invalidation also reaches remote-only L1 entries through tag-level backplane messages. Delivery is best-effort and asynchronous, not an all-node acknowledgement; stale/fail-safe copies are evicted, and concurrent factory writes are not globally fenced. Participating nodes and custom transports require a coordinated upgrade for the new `Tags`/`KeyPrefix` fields and message type 5. Backplane namespace filtering does not replace a separately isolated L2 adapter namespace. See [Backplane and Multi-Node Caching](docs/explanation/BackplaneAndMultiNode.md) for consistency, disconnect/recovery, and mixed-version limitations.
+
 ---
 
 ## Requirements

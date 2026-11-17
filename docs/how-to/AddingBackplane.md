@@ -71,14 +71,25 @@ c, err := cache.New(
 
 ## Message types
 
-The backplane transmits four message types:
+The backplane transmits five message types:
 
-| Type                    | Trigger                                         | Receiver action                                  |
-| ----------------------- | ----------------------------------------------- | ------------------------------------------------ |
-| `MessageTypeSet` (1)    | A key was written via `Set` or `GetOrSet`       | Evict key from L1 so next access fetches from L2 |
-| `MessageTypeDelete` (2) | A key was deleted via `Delete` or `DeleteByTag` | Evict key from L1                                |
-| `MessageTypeExpire` (3) | A key was logically expired via `Expire`        | Mark key as logically expired in L1              |
-| `MessageTypeClear` (4)  | `Clear` was called                              | Clear all L1 entries and the tag index           |
+| Type                          | Trigger                                  | Receiver action                                    |
+| ----------------------------- | ---------------------------------------- | -------------------------------------------------- |
+| `MessageTypeSet` (1)          | A key was written via `Set` or `GetOrSet` | Evict key from L1 so next access fetches from L2     |
+| `MessageTypeDelete` (2)       | A key was deleted via `Delete`           | Evict key from L1                                   |
+| `MessageTypeExpire` (3)       | A key was logically expired via `Expire` | Mark key as logically expired in L1                 |
+| `MessageTypeClear` (4)        | `Clear` was called                       | Clear all L1 entries and the tag index              |
+| `MessageTypeDeleteByTags` (5) | `DeleteByTag` or `DeleteByTags`           | Hard-evict L1 entries carrying any supplied tag      |
+
+Tag messages carry `Tags` and an empty `Key`. Receivers use their own tag indexes, so eviction includes remote-only and stale/fail-safe entries even when the sender has no matching local keys. One tag-level message is attempted per nonempty invalidation call, including after an L2 error, unless notifications are skipped; `DeleteByTags` with an empty slice is a no-op.
+
+Every message carries `CacheName` and `KeyPrefix`; receivers require an exact match for both, including for Clear. This isolates backplane notifications only: use separately isolated L2 adapter namespaces to isolate L2 tags and Clear.
+
+### Delivery and upgrades
+
+Delivery is best-effort and asynchronous. A successful synchronous publish does not acknowledge remote processing. Duplicate/delayed messages can evict fresh entries, and concurrent or in-flight factory writes are not globally fenced. Redis pub/sub does not replay missed messages. See [Backplane and Multi-Node Caching](../explanation/BackplaneAndMultiNode.md#delivery-and-concurrent-writes) for the full contract.
+
+Upgrade participating nodes and custom transports together to preserve the new `Tags` and `KeyPrefix` fields. Old nodes ignore type 5; upgraded recipients with nonempty prefixes reject legacy messages missing `KeyPrefix`. There is no per-key fallback or mixed-version coherence guarantee.
 
 ## Self-message filtering
 
@@ -86,9 +97,9 @@ Each message carries a `SourceID` identifying the sender node. The cache skips p
 
 ## Auto-recovery
 
-When the backplane circuit breaker recovers (transitions from open to closed), the cache automatically clears L1 to resynchronize, since invalidation messages may have been missed during the outage.
+`BackplaneAutoRecovery` (default: `true`) clears only the **local** L1 and tag index when the outbound publish circuit breaker recovers from open/half-open to closed after a successful publish. It does not clear other nodes or replay lost notifications.
 
-This is controlled by `BackplaneAutoRecovery` on the `Options` struct (default: `true`).
+A Redis subscriber reconnect alone does not trigger this recovery: inbound subscription outages need not open the outbound publish circuit breaker. Without that transition, reconcile through TTL expiry, an explicit `Clear`, or restart.
 
 There is no `With...` helper; to disable recovery, pass a custom `Option`:
 

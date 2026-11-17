@@ -105,8 +105,9 @@ type (
 		Key  string
 		Type backplane.MessageType
 	}
-	// EventBackplaneReceived is emitted when a backplane message is
-	// received from another node.
+	// EventBackplaneReceived is emitted after an accepted message from
+	// another node has completed local processing. It is not an
+	// acknowledgement that any other node has processed the message.
 	EventBackplaneReceived struct {
 		Key  string
 		Type backplane.MessageType

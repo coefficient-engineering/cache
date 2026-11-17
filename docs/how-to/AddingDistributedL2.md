@@ -58,6 +58,8 @@ c, err := cache.New(
 
 `l2redis.New` now returns `(*Adapter, error)`: this is a source-breaking constructor change, not a change to `l2.Adapter`. It validates client capabilities and maintenance configuration without Redis I/O. Native `*redis.Client` and `*redis.ClusterClient` integrations provide primary access and primary enumeration. Arbitrary `redis.Cmdable` wrappers need explicit compatible capabilities through `WithPrimaryAccess`; unsupported clients fail construction. `*redis.Ring` additionally requires `WithControlClient` with a native standalone/Cluster client for coherent metadata routing: independently remapped control state is unsafe.
 
+The cache's `WithKeyPrefix` prefixes entry keys and, together with `CacheName`, scopes backplane notifications. It does **not** isolate an adapter's tag metadata or Clear operations. Configure the L2 adapter's own namespace separately (the `l2redis.WithKeyPrefix` above) when independent caches must not share L2 invalidations. Backplane namespace filtering alone does not provide that isolation.
+
 ### Redis invalidation and lifecycle
 
 - Payloads remain distributed across Cluster shards. Every record wraps the opaque core envelope with an incarnation and Clear/tag-generation snapshots. `Get` validates those snapshots against authoritative primary metadata, including for untagged records.
@@ -70,7 +72,7 @@ c, err := cache.New(
 
 An adapter error is not a successful invalidation acknowledgement. An ambiguous I/O failure may nevertheless have changed Redis; there is no rollback promise. The core's rethrow/background policy below still controls what cache callers observe. Redis acknowledged-write rollback, failover history loss, and restoring older Redis state are excluded from the no-resurrection guarantee.
 
-These guarantees concern L2 reads, not remote L1 copies. Tag invalidation currently publishes only locally known keys; remote-only L1 invalidation is tracked in [issue #38](https://github.com/coefficient-engineering/cache/issues/38).
+These guarantees concern L2 reads. With a backplane, tag invalidation also sends a tag-level message so each receiving node can hard-evict its own matching L1 entries, including remote-only and stale/fail-safe copies. Delivery is best-effort and asynchronous, not an all-node acknowledgement; concurrent factory writes are not fenced. Failed or skipped L2 invalidation can leave data available to refill L1. See [Using Tags](UsingTags.md#l1-consistency-and-failures) for the separate L1 consistency contract and coordinated backplane upgrade requirement.
 
 ### Upgrading the Redis storage layout
 

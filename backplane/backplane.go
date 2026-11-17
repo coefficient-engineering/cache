@@ -1,16 +1,15 @@
 // Package backplane defines the [Backplane] interface for inter-node
 // cache invalidation.
 //
-// When a cache instance writes, deletes, or expires an entry, it publishes
-// a [Message] to the backplane. Other nodes receive the message and evict
-// or expire the corresponding entry from their local L1 cache, keeping all
-// nodes consistent without polling the distributed L2 layer.
+// Cache mutations publish a [Message]. Other nodes evict or expire matching
+// local L1 entries when delivery completes, without polling L2. Delivery is
+// best-effort: publishing is not a cross-node processing acknowledgement.
 //
 // # How the cache processes incoming messages
 //
 // When the cache receives a message from the backplane:
 //
-//  1. Messages with a different CacheName are ignored.
+//  1. Messages with a different CacheName or KeyPrefix are ignored.
 //  2. Messages whose SourceID matches the local NodeID are ignored.
 //  3. If IgnoreIncomingBackplaneNotifications is set, all messages are ignored.
 //  4. Otherwise:
@@ -19,6 +18,9 @@
 //     - [MessageTypeExpire]: the L1 entry's logical expiry is set to now;
 //     the value is retained for fail-safe.
 //     - [MessageTypeClear]: L1 is cleared and the tag index is reset.
+//     - [MessageTypeDeleteByTags]: entries carrying any listed tag are evicted,
+//     including remote-only and stale/fail-safe entries.
+//     Unrelated entries stay.
 //
 // # Choosing a transport
 //
@@ -52,13 +54,17 @@ const (
 	// MessageTypeClear indicates the entire cache was cleared.
 	// [Message.Key] is empty for this type.
 	MessageTypeClear MessageType = 4
+
+	// MessageTypeDeleteByTags evicts entries carrying any of [Message.Tags].
+	// Receivers use their own tag index, including remote-only entries.
+	MessageTypeDeleteByTags MessageType = 5
 )
 
 // Message is a single invalidation notification sent between nodes.
 //
-// The cache populates CacheName from the configured cache name and Key
-// from the unprefixed cache key. SourceID is set by the [Backplane]
-// implementation (typically to the local node ID) before publishing.
+// The cache populates CacheName, KeyPrefix, and SourceID from configuration.
+// Key is unprefixed for key-level mutations; Tags identifies a union for tag
+// invalidation. Transports must preserve all fields.
 type Message struct {
 	// Type is the kind of mutation.
 	Type MessageType
@@ -67,8 +73,17 @@ type Message struct {
 	// named cache instances to share one backplane channel.
 	CacheName string
 
-	// Key is the affected key. Empty for [MessageTypeClear].
+	// KeyPrefix identifies the key namespace within CacheName.
+	// Receivers require an exact match, including the empty prefix.
+	KeyPrefix string
+
+	// Key is the unprefixed affected key. Empty for Clear and DeleteByTags.
 	Key string
+
+	// Tags is the union of tags to invalidate for MessageTypeDeleteByTags.
+	// Other message types leave it empty. Publishers must not mutate this
+	// slice after publishing; transports must preserve it.
+	Tags []string
 
 	// SourceID is the node ID of the sender. Receivers use this to
 	// skip self-messages.

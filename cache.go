@@ -295,7 +295,7 @@ func (c *cache) storeSafely(ctx context.Context, key string, value any, opts Ent
 	}
 
 	// backplane notification
-	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeSet, key, opts))
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.Message{Type: backplane.MessageTypeSet, Key: key}, opts))
 }
 
 // computePhysicalExpiry returns when an entry written at now is physically
@@ -621,7 +621,7 @@ func (c *cache) Delete(ctx context.Context, key string, opts ...EntryOption) err
 		}
 	}
 
-	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeDelete, key, eo))
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.Message{Type: backplane.MessageTypeDelete, Key: key}, eo))
 }
 
 // Expire marks the entry as logically expired without removing it from L1.
@@ -640,50 +640,39 @@ func (c *cache) Expire(ctx context.Context, key string, opts ...EntryOption) err
 		l2Err = c.expireL2(ctx, key, eo)
 	}
 
-	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeExpire, key, eo))
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.Message{Type: backplane.MessageTypeExpire, Key: key}, eo))
 }
 
-// DeleteByTag removes all entries associated with tag from L1 (via the
-// in-memory tag index) and L2 (via [l2.Adapter.DeleteByTag]). Publishes a
-// [backplane.MessageTypeDelete] backplane notification for each removed
-// key; every key is published even if the L2 call or an earlier publish
-// fails, and rethrown errors are joined.
+// DeleteByTag removes matching entries from L1 and L2, then publishes a
+// tag-level notification even if this node has no matching keys or L2 fails.
+// Remote nodes evict their matching L1 entries when delivery completes.
+// Rethrown L2 and publish errors are joined.
 func (c *cache) DeleteByTag(ctx context.Context, tag string, opts ...EntryOption) error {
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 
-	// Get all L1 keys with this tag
-	keys := c.tagIdx.keysForTag(tag)
-
-	// Remove from L1
-	for _, pk := range keys {
-		c.evictL1(pk)
-	}
-
-	errs := make([]error, 0, len(keys)+1)
+	c.evictL1Tags([]string{tag})
+	var l2Err error
 
 	// Remove from L2 (adapter handles its own tag bookkeeping)
 	if c.l2 != nil && !eo.SkipL2Write {
 		err := c.callL2(ctx, eo, func(ctx context.Context) error { return c.l2.DeleteByTag(ctx, tag) })
 		if err != nil {
-			errs = append(errs, c.l2Failed(ctx, eo, l2Op{name: "delete by tag", tag: tag}, err))
+			l2Err = c.l2Failed(ctx, eo, l2Op{name: "delete by tag", tag: tag}, err)
 		}
 	}
 
-	// Notify backplane for each removed key
-	for _, pk := range keys {
-		unprefixed := pk[len(c.opts.KeyPrefix):]
-		errs = append(errs, c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo))
-	}
-	return errors.Join(errs...)
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.Message{
+		Type: backplane.MessageTypeDeleteByTags, Tags: []string{tag},
+	}, eo))
 }
 
 // DeleteByTags removes all entries associated with any of tags from L1 (via
 // the in-memory tag index) and L2 under one shared hard timeout:
 // [l2.TagsDeleter.DeleteByTags] when the adapter implements it, otherwise
 // [l2.Adapter.DeleteByTag] once per tag. Duplicate tags are ignored, and no
-// tags is a no-op. Publishes a [backplane.MessageTypeDelete] backplane
-// notification for each removed key; every key is published even if the L2
-// call or an earlier publish fails, and rethrown errors are joined. An L2
+// tags is a no-op. Publishes a tag-level backplane notification even if the
+// local index is empty or L2 fails. Remote delivery is asynchronous; rethrown
+// L2 and publish errors are joined. An L2
 // failure report lists the first few tags and fallback errors, counting
 // the rest; all underlying errors remain available to [errors.Is] and
 // [errors.As].
@@ -694,35 +683,21 @@ func (c *cache) DeleteByTags(ctx context.Context, tags []string, opts ...EntryOp
 	}
 	eo := applyOptions(c.opts.DefaultEntryOptions, opts)
 
-	// Get all L1 keys with any of the tags; a key may carry several of them.
-	var keys []string
-	for _, tag := range tags {
-		keys = append(keys, c.tagIdx.keysForTag(tag)...)
-	}
-	keys = slices.Compact(slices.Sorted(slices.Values(keys)))
-
-	// Remove from L1
-	for _, pk := range keys {
-		c.evictL1(pk)
-	}
-
-	errs := make([]error, 0, len(keys)+1)
+	c.evictL1Tags(tags)
+	var l2Err error
 
 	// Remove from L2 (adapter handles its own tag bookkeeping)
 	if c.l2 != nil && !eo.SkipL2Write {
 		err := c.callL2(ctx, eo, func(ctx context.Context) error { return c.deleteL2Tags(ctx, tags) })
 		if err != nil {
 			op := l2Op{name: "delete by tags", tag: tagsSummary(tags)}
-			errs = append(errs, c.l2Failed(ctx, eo, op, err))
+			l2Err = c.l2Failed(ctx, eo, op, err)
 		}
 	}
 
-	// Notify backplane for each removed key
-	for _, pk := range keys {
-		unprefixed := pk[len(c.opts.KeyPrefix):]
-		errs = append(errs, c.publishBackplane(ctx, backplane.MessageTypeDelete, unprefixed, eo))
-	}
-	return errors.Join(errs...)
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.Message{
+		Type: backplane.MessageTypeDeleteByTags, Tags: tags,
+	}, eo))
 }
 
 // deleteL2Tags removes the L2 keys of tags with [l2.TagsDeleter] when the
@@ -805,7 +780,7 @@ func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive
 		}
 	}
 
-	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.MessageTypeClear, "", eo))
+	return errors.Join(l2Err, c.publishBackplane(ctx, backplane.Message{Type: backplane.MessageTypeClear}, eo))
 }
 
 // Close shuts down background goroutines (backplane subscription) and

@@ -22,6 +22,8 @@ type Handler func(msg Message)
 
 Send `msg` to all nodes subscribed to this backplane. If `msg.SourceID` is empty, set it to this node's identifier before publishing.
 
+Delivery is best-effort and asynchronous. A successful `Publish` reports transport acceptance, not receipt or processing by every node. The cache does not add acknowledgements or replay.
+
 ### `Subscribe(handler Handler) (cancel func(), err error)`
 
 Register `handler` to receive inbound messages. The implementation must call `handler` from a goroutine it manages. Never call `handler` on the caller's goroutine.
@@ -38,23 +40,33 @@ Shut down the transport connection. After `Close`, no more messages should be pu
 type MessageType uint8
 
 const (
-    MessageTypeSet    MessageType = 1
-    MessageTypeDelete MessageType = 2
-    MessageTypeExpire MessageType = 3
-    MessageTypeClear  MessageType = 4
+    MessageTypeSet          MessageType = 1
+    MessageTypeDelete       MessageType = 2
+    MessageTypeExpire       MessageType = 3
+    MessageTypeClear        MessageType = 4
+    MessageTypeDeleteByTags MessageType = 5
 )
 
 type Message struct {
     Type      MessageType
     CacheName string
+    KeyPrefix string
     Key       string
+    Tags      []string
     SourceID  string
 }
 ```
 
-- `CacheName` allows multiple named cache instances to share one backplane channel. Receivers filter by cache name.
-- `Key` is empty for `MessageTypeClear`.
+- `CacheName` and `KeyPrefix` must both exactly match the receiver's configuration for **every** message type, including Clear. These fields isolate backplane notifications, not the L2 adapter's storage or tag namespace.
+- `Key` is the unprefixed cache key, empty for `MessageTypeClear` and `MessageTypeDeleteByTags`.
+- `Tags` contains the tags to invalidate for `MessageTypeDeleteByTags`; other types leave it empty. Receivers hard-evict entries carrying **any** of these tags using their own L1 tag index, including stale/fail-safe copies. The sender need not have any matching local keys.
 - `SourceID` identifies the sender. Receivers use this to skip self-messages.
+
+Transports must preserve the complete message, including `Tags` and `KeyPrefix`; do not reconstruct only the legacy fields. Publishers must not mutate `Tags` after publishing. The built-in Redis adapter serializes the complete message as JSON; the memory adapter passes the complete `Message`.
+
+### Coordinated upgrades
+
+The `Backplane` interface is unchanged, but the message protocol has changed. Upgrade all participating cache nodes and custom transports together: older nodes ignore type 5, and upgraded recipients with a nonempty prefix reject legacy messages whose `KeyPrefix` is missing. There is no per-key fallback or mixed-version coherence guarantee.
 
 ## Self-message filtering
 

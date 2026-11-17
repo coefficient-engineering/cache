@@ -65,11 +65,11 @@ A threshold of 0 disables the circuit breaker (the default). With threshold 0, `
 
 ## Auto-recovery
 
-When the backplane circuit breaker transitions from open/half-open to closed (recovery), the cache clears L1 and the tag index. This is controlled by the `BackplaneAutoRecovery` option (default: true).
+When the **outbound publish** backplane circuit breaker transitions from open/half-open to closed (recovery), the cache clears only its local L1 and tag index. This is controlled by the `BackplaneAutoRecovery` option (default: true).
 
-The rationale: while the backplane was down, other nodes may have written new values. The local L1 could be stale. Clearing L1 forces the next requests to read from L2, ensuring consistency.
+The rationale: while notifications were unavailable, other nodes may have written new values. Clearing local L1 forces subsequent requests to check L2 or the factory, but does not replay messages, acknowledge remote eviction, or repair failed L2 invalidation. Redis subscriber reconnects alone do not trigger this transition; without outbound breaker recovery, reconciliation relies on TTL expiry, explicit `Clear`, or restart.
 
-The state-change callback runs after the breaker mutex is released. Auto-recovery clears L1 synchronously after a successful half-open probe.
+The state-change callback runs after the breaker mutex is released. Auto-recovery clears local L1 synchronously after a successful half-open publish probe.
 
 ## Events
 

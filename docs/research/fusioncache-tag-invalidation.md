@@ -154,7 +154,7 @@ The maintainer confirmed the complete design after the experiments and final tra
 - Use logical tag invalidation and Clear; do not scan payloads on these foreground paths. Existing Redis error propagation policy still applies at the core cache surface; adapter errors must not masquerade as successful metadata mutations.
 - Use a new versioned storage layout for upgrade. Automatic runtime incarnation changes invalidate the existing layout's old records without requiring an operator configuration cutover.
 - Keep the accepted Redis history-rollback exclusion and shared-metadata throughput limit explicit. Keep source observations separate from inferred guarantees and bounded experimental evidence.
-- Track remote-only L1 invalidation separately in [issue #38](https://github.com/coefficient-engineering/cache/issues/38).
+- Remote-only L1 invalidation, tracked separately in [issue #38](https://github.com/coefficient-engineering/cache/issues/38), now uses tag-level backplane messages and each receiver's own tag index. This is best-effort asynchronous eviction, not the L2 generation fence described here; see [Backplane and Multi-Node Caching](../explanation/BackplaneAndMultiNode.md#delivery-and-concurrent-writes) for concurrency, disconnect/recovery, and coordinated-upgrade limits.
 
 Implementation must add production regression/integration coverage for command replay, incarnation loss/recreation, concurrent recovery, primary routing, MOVED/ASK transitions, conditional cleanup, Clear, metadata retirement, unsupported capabilities, and native finite TTL / indefinite retention. The throwaway experiments do not replace that work.
 

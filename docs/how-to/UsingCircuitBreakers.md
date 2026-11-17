@@ -37,9 +37,9 @@ The circuit breaker has three states:
 
 ## Recovery behavior
 
-When the backplane circuit breaker transitions from open/half-open to closed (a successful probe), the cache automatically clears L1 and the tag index. This is because backplane messages may have been missed during the outage, leaving L1 potentially stale.
+When the **outbound publish** backplane circuit breaker transitions from open/half-open to closed (a successful publish probe), the cache automatically clears only its local L1 and tag index. This is because backplane messages may have been missed during the outage, leaving L1 potentially stale.
 
-This auto-recovery behavior is controlled by `BackplaneAutoRecovery` on the `Options` struct (default: `true`).
+This auto-recovery behavior is controlled by `BackplaneAutoRecovery` on the `Options` struct (default: `true`). It does not replay messages or clear other nodes. Redis subscriber reconnect alone does not trigger it; without the outbound recovery transition, reconcile through TTL expiry, explicit `Clear`, or restart. See [Backplane and Multi-Node Caching](../explanation/BackplaneAndMultiNode.md#auto-recovery).
 
 There is no `With...` helper; to disable recovery, pass a custom `Option`:
 

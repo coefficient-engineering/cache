@@ -5,8 +5,9 @@
 //
 // Scenarios: stampede, failsafe, tags, shared-factory-events, breaker-events,
 // lock-timeout, skip-l2-read-when-stale (L1 or in-memory L2); multinode,
-// backplane-rethrow, l2-rethrow, expire-l2, l2-soft-timeout (need REDIS_ADDR);
-// cluster-tags (needs REDIS_CLUSTER_ADDRS, optional REDIS_CLUSTER_DIAL_MAP).
+// backplane-rethrow, l2-rethrow, expire-l2, l2-soft-timeout, remote-tags
+// (need REDIS_ADDR); cluster-tags (needs REDIS_CLUSTER_ADDRS, optional
+// REDIS_CLUSTER_DIAL_MAP).
 // Exit status is 0 only when every check in the scenario holds.
 package main
 
@@ -27,6 +28,14 @@ const (
 	valueKey = "value" // the observed cached value
 	errorKey = "error" // the observed error string
 	foundKey = "found" // whether the value was found
+	entryKey = "key"   // the observed cache key
+)
+
+// Tags shared by the Redis consumer scenarios.
+const (
+	tagRed   = "red"
+	tagBlue  = "blue"
+	tagGreen = "green"
 )
 
 // check is one observed result.
@@ -93,6 +102,7 @@ var scenarios = map[string]func(context.Context, *report) error{
 	"skip-l2-read-when-stale": runSkipL2ReadWhenStale,
 	"tags":                    runTags,
 	"multinode":               runMultiNode,
+	"remote-tags":             runRemoteTags,
 	"l2-rethrow":              runL2Rethrow,
 	"expire-l2":               runExpireL2,
 	"l2-soft-timeout":         runL2SoftTimeout,

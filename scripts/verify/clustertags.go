@@ -23,8 +23,6 @@ const (
 	clusterTimeout      = 30 * time.Second
 	clusterCleanupTime  = 5 * time.Second
 	clusterPollTime     = 20 * time.Millisecond
-	clusterRed          = "red"
-	clusterBlue         = "blue"
 	clusterRemaining    = "remaining"
 	clusterRecoveryTag  = "recovery"
 	clusterAfterLoss    = "after-loss"
@@ -88,10 +86,10 @@ func runClusterTags(ctx context.Context, r *report) (result error) {
 
 func (s *clusterTagRun) prepareEntries() {
 	s.entries = []clusterTagEntry{
-		{s.keys[0], []string{clusterRed, clusterBlue, clusterRed}},
-		{s.keys[1], []string{clusterRed}},
-		{s.keys[2], []string{clusterBlue, "green"}},
-		{clusterRemaining, []string{"green"}},
+		{s.keys[0], []string{tagRed, tagBlue, tagRed}},
+		{s.keys[1], []string{tagRed}},
+		{s.keys[2], []string{tagBlue, tagGreen}},
+		{clusterRemaining, []string{tagGreen}},
 		{"unrelated", []string{"purple"}},
 		{"untagged", nil},
 	}
@@ -117,7 +115,7 @@ func (s *clusterTagRun) read(ctx context.Context, name, key string, expected []b
 	s.report.record(check{
 		Name: name, OK: err == nil && matches,
 		Observed: map[string]any{
-			"key": key, "present": value != nil, "payload": value,
+			entryKey: key, "present": value != nil, "payload": value,
 			"expected_present": expected != nil, errorKey: errString(err),
 		},
 	})
@@ -134,7 +132,7 @@ func (s *clusterTagRun) seed(ctx context.Context) error {
 }
 
 func (s *clusterTagRun) invalidate(ctx context.Context) error {
-	if err := s.b.DeleteByTags(ctx, []string{clusterRed, clusterBlue, clusterRed, clusterBlue}); err != nil {
+	if err := s.b.DeleteByTags(ctx, []string{tagRed, tagBlue, tagRed, tagBlue}); err != nil {
 		return err
 	}
 	for _, key := range s.keys {
@@ -143,7 +141,7 @@ func (s *clusterTagRun) invalidate(ctx context.Context) error {
 	for _, key := range []string{clusterRemaining, "unrelated", "untagged"} {
 		s.read(ctx, "bulk-delete-preserves-other-entries", key, s.payload)
 	}
-	if err := s.a.DeleteByTag(ctx, "green"); err != nil {
+	if err := s.a.DeleteByTag(ctx, tagGreen); err != nil {
 		return err
 	}
 	s.read(ctx, "single-tag-invalidates-remaining-match", clusterRemaining, nil)
@@ -193,7 +191,7 @@ func (s *clusterTagRun) reclaim(ctx context.Context) error {
 		}
 		s.report.record(check{
 			Name: "invalidated-ttl-zero-bytes-await-maintenance", OK: ttl == -1,
-			Observed: map[string]any{"key": entry.key, "pttl": int64(ttl)},
+			Observed: map[string]any{entryKey: entry.key, "pttl": int64(ttl)},
 		})
 	}
 	maintenanceCtx, stop := context.WithCancel(ctx)
