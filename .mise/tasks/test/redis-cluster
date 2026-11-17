@@ -5,9 +5,14 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 container=""
 cleanup() {
+  status=$?
   if [[ -n "$container" ]]; then
+    if [[ "$status" -ne 0 ]]; then
+      docker logs "$container" >&2 || true
+    fi
     docker rm -f "$container" >/dev/null 2>&1 || true
   fi
+  return "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT

@@ -327,11 +327,19 @@ func TestRedisClusterControlRecoveryDuringSlotMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Topology changes can synchronously persist Cluster configuration.
+	// Keep their administrative I/O budget separate from cache-call defaults.
+	const administrationTimeout = 15 * time.Second
+	source = source.WithTimeout(administrationTimeout)
+	target = target.WithTimeout(administrationTimeout)
+	for i, primary := range primaries {
+		primaries[i] = primary.WithTimeout(administrationTimeout)
+	}
 	cleanRedisClusterNamespace(t, client, prefix)
 	// Registered after namespace cleanup: restore topology before its SCAN pass.
 	// This also runs on failures partway through MIGRATING/IMPORTING setup.
 	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
 		for _, primary := range primaries {
 			// ASKING permits removal from the importing node before ownership
@@ -409,7 +417,13 @@ func TestRedisClusterControlRecoveryDuringSlotMigration(t *testing.T) {
 		t.Fatalf("root created on importing target = (%v, %v)", fields, err)
 	}
 	// Finalize actual ownership, leaving the same native Cluster client alive.
+	assigned := make(map[string]bool)
 	for _, primary := range append([]*goredis.Client{target, source}, primaries...) {
+		address := primary.Options().Addr
+		if assigned[address] {
+			continue
+		}
+		assigned[address] = true
 		if err := primary.Do(ctx, "CLUSTER", "SETSLOT", slot, "NODE", targetID).Err(); err != nil {
 			t.Fatalf("transfer slot ownership to target: %v", err)
 		}
