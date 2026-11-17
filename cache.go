@@ -235,6 +235,8 @@ type cache struct {
 	logger *slog.Logger
 
 	l1 l1.Adapter
+	// l1Mu serializes mutations with tag-index updates. Reads remain concurrent.
+	l1Mu sync.Mutex
 
 	l2         l2.Adapter // nil if no L2 configured
 	serializer serializer.Serializer
@@ -320,6 +322,11 @@ func (c *cache) l1Entry(pk string) (*cacheEntry, bool) {
 
 // setL1Entry stores entry in L1 under pk and indexes its tags.
 func (c *cache) setL1Entry(pk string, entry *cacheEntry, size int64) {
+	c.l1Mu.Lock()
+	defer c.l1Mu.Unlock()
+	if old, ok := c.l1Entry(pk); ok {
+		c.tagIdx.remove(pk, old.tags)
+	}
 	c.l1.Set(pk, entry, size)
 	if len(entry.tags) > 0 {
 		c.tagIdx.add(pk, entry.tags)
@@ -328,6 +335,13 @@ func (c *cache) setL1Entry(pk string, entry *cacheEntry, size int64) {
 
 // evictL1 removes pk from L1 and drops it from the tag index.
 func (c *cache) evictL1(pk string) {
+	c.l1Mu.Lock()
+	defer c.l1Mu.Unlock()
+	c.evictL1Locked(pk)
+}
+
+// evictL1Locked requires l1Mu; the caller may have validated the entry's tags.
+func (c *cache) evictL1Locked(pk string) {
 	raw, loaded := c.l1.LoadAndDelete(pk)
 	if !loaded {
 		return
@@ -340,6 +354,8 @@ func (c *cache) evictL1(pk string) {
 // expireL1 replaces the L1 entry under pk with a copy that is logically
 // expired now, keeping it available as a fail-safe fallback.
 func (c *cache) expireL1(pk string) {
+	c.l1Mu.Lock()
+	defer c.l1Mu.Unlock()
 	old, ok := c.l1Entry(pk)
 	if !ok {
 		return
@@ -766,11 +782,7 @@ func tagsSummary(tags []string) string {
 func (c *cache) Clear(ctx context.Context, clearL2 bool) error { //nolint:revive // flag-parameter: public API mirrors IFusionCache
 	eo := c.opts.DefaultEntryOptions
 
-	// Clear L1: iterate and delete all entries
-	c.l1.Clear()
-
-	// Clear tag index
-	c.tagIdx.clear()
+	c.clearL1()
 
 	// Clear L2 if requested
 	var l2Err error

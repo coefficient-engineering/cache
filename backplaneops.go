@@ -75,8 +75,7 @@ func (c *cache) handleBackplaneMessage(msg backplane.Message) {
 		c.evictL1Tags(msg.Tags)
 
 	case backplane.MessageTypeClear:
-		c.l1.Clear()
-		c.tagIdx.clear()
+		c.clearL1()
 	}
 	// Observers can use receipt as a barrier: local invalidation is complete.
 	c.events.emit(EventBackplaneReceived{Key: msg.Key, Type: msg.Type})
@@ -87,6 +86,5 @@ func (c *cache) attemptAutoRecovery() {
 		return
 	}
 	c.logger.Info("cache: backplane auto-recovery, clearing L1...")
-	c.l1.Clear()
-	c.tagIdx.clear()
+	c.clearL1()
 }

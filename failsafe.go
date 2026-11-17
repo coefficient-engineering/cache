@@ -34,7 +34,7 @@ func (c *cache) executeWithFailSafe(ctx context.Context, call *factoryCall) (any
 		tags:           staleEntry.tags,
 		createdAt:      staleEntry.createdAt,
 	}
-	c.l1.Set(c.prefixedKey(key), throttled, call.opts.Size)
+	c.setL1Entry(c.prefixedKey(key), throttled, call.opts.Size)
 
 	return staleEntry.value, nil
 }

@@ -42,7 +42,7 @@ It invalidates every entry carrying any of the tags, as if `DeleteByTag` were ca
 
 ## How tag tracking works
 
-**L1 (in-process)**: The cache maintains an in-memory reverse index mapping each tag to the set of prefixed keys that carry it. This is a `map[string]map[string]struct{}` protected by a `sync.RWMutex`.
+**L1 (in-process)**: A reverse index maps each tag to its prefixed keys. One mutation mutex coordinates L1 replacements, tag checks, eviction, and index updates; ordinary L1 reads remain concurrent. A concurrent retagged replacement cannot be removed by invalidation of its former tag.
 
 **L2 (distributed)**: Tag associations are the responsibility of the L2 adapter. The `l2.Adapter.Set` method receives the tags alongside the key and value. Storage and invalidation are implementation-specific:
 
