@@ -9,4 +9,4 @@ retract (
 	v0.3.1 // Raised the minimum Go version to 1.26 in a patch release; use v0.4.0.
 )
 
-require golang.org/x/sync v0.24.0
+require golang.org/x/sync v0.25.0
