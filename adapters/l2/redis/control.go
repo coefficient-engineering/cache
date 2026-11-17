@@ -119,6 +119,9 @@ func initializeOnce(ctx context.Context, primary *redis.Client, route initializa
 	options.MaxRetries = -1
 	options.PoolSize = 1
 	options.MinIdleConns = 0
+	// Protected push handlers belong to one client. Re-registering them on
+	// the caller's processor can panic when notifications are required.
+	options.PushNotificationProcessor = nil
 	if route.address != "" {
 		options.Addr = route.address
 	}

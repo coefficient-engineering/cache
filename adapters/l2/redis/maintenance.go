@@ -142,7 +142,7 @@ func (a *Adapter) collectPrimary(ctx context.Context, primary *redis.Client, pas
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := a.collectRecord(ctx, key, pass); err != nil {
+			if err := a.collectRecord(ctx, primary, key, pass); err != nil {
 				return err
 			}
 		}
@@ -160,8 +160,10 @@ end
 return 0
 `
 
-func (a *Adapter) collectRecord(ctx context.Context, key string, pass *collection) error {
-	data, err := a.client.Eval(ctx, "return redis.call('GET', KEYS[1])", []string{key}).Text()
+func (a *Adapter) collectRecord(ctx context.Context, primary *redis.Client, key string, pass *collection) error {
+	// A Ring may have remapped this key since it was written. Reclaim the
+	// physical version found on this shard, not a record on its new route.
+	data, err := primary.Eval(ctx, "return redis.call('GET', KEYS[1])", []string{key}).Text()
 	if errors.Is(err, redis.Nil) {
 		return nil
 	}
@@ -177,7 +179,7 @@ func (a *Adapter) collectRecord(ctx context.Context, key string, pass *collectio
 		return err
 	}
 	if !valid {
-		return a.client.Eval(ctx, conditionalDeleteScript, []string{key}, data).Err()
+		return primary.Eval(ctx, conditionalDeleteScript, []string{key}, data).Err()
 	}
 	pass.mu.Lock()
 	for _, tag := range header.Tags {

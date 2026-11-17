@@ -102,7 +102,7 @@ Physical observations use the documented wire formula, not private adapter helpe
 
 - This intentionally deletes metadata. Use only a disposable Cluster, never shared application data. The random per-run namespace is not a substitute for this prerequisite.
 - `ReadOnly`/`RouteRandomly` exercise the injected client's configuration, but the topology has no replicas. This is not a replica consistency or network-fault proof.
-- Maintenance is explicit, not a constructor side effect. The scenario uses a 50 ms interval and waits for observable reclamation; application defaults may run more slowly.
+- Maintenance is explicit, not a constructor side effect. The scenario uses a 20 ms interval and waits for observable reclamation; application defaults may run more slowly.
 - The scenario cancels and joins its maintenance loop, removes its known payload keys and control hash even on failure, and closes both clients. It does not change the integration runner or adapter implementation.
 
 Cleanup, preserving the JSON evidence:

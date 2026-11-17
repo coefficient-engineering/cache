@@ -216,7 +216,7 @@ func TestRedisClusterMaintenanceProtectsConcurrentOverwrite(t *testing.T) {
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	defer unblock()
-	client.AddHook(clusterCommandHook(func(next goredis.ProcessHook) goredis.ProcessHook {
+	hook := clusterCommandHook(func(next goredis.ProcessHook) goredis.ProcessHook {
 		return func(ctx context.Context, cmd goredis.Cmder) error {
 			args := cmd.Args()
 			if cmd.Name() == "eval" && len(args) > 3 && args[3] == wireKey && strings.Contains(fmt.Sprint(args[1]), "UNLINK") && armed.CompareAndSwap(true, false) {
@@ -232,7 +232,13 @@ func TestRedisClusterMaintenanceProtectsConcurrentOverwrite(t *testing.T) {
 			}
 			return next(ctx, cmd)
 		}
-	}))
+	})
+	if err := client.ForEachMaster(ctx, func(_ context.Context, primary *goredis.Client) error {
+		primary.AddHook(hook)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	maintenanceCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	finished := make(chan error, 1)
